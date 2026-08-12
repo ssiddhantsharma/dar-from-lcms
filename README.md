@@ -8,6 +8,8 @@ Converts Agilent `.d` to mzML (ProteoWizard), deconvolves each spectrum, and wri
 unmodified and +1 masses, the conjugated fraction and DAR, plus a plot per sample. Written for a
 single conjugation site (one reactive residue), where DAR is occupancy 0-1.
 
+For how the measurement and the scripts work end to end, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+
 ## Setup
 
     brew install colima docker qemu lima-additional-guestagents   # macOS
