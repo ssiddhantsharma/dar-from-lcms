@@ -45,6 +45,17 @@ read at the chemically expected positions. If the unmodified and conjugate speci
 cannot separate them -- it confirms identity/purity, not an independent DAR; run an unmodified
 control for the orthogonal check.
 
+## Tests
+
+The analytical core (mzML parsing, band integration, charge assignment, elution-window pick, DAR
+math) has unit tests that need only numpy:
+
+```
+pip install numpy pytest && pytest
+```
+
+CI runs these on every push, plus a full image build and a real deconvolution smoke test.
+
 ## Notes
 
 - Deconvolve the elution-peak window, not the whole run, or the protein drowns in background.

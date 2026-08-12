@@ -18,9 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ruff (real errors only)
-        run: pipx run ruff check --select F dar_auto.py
+        run: pipx run ruff check --select F dar_auto.py tests
       - name: shellcheck the wrapper
         run: shellcheck -S error dar
+
+  test:
+    runs-on: ubuntu-latest   # unit tests need only numpy; no Docker/UniDec, so this is fast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy pytest
+      - run: pytest -q
 
   build:
     runs-on: ubuntu-latest   # native x86_64; no emulation, unlike an Apple-Silicon Mac
@@ -35,6 +45,8 @@ jobs:
           tags: unidec-linux:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Module imports cleanly in the image
+        run: docker run --rm unidec-linux:ci python3 -c "import sys; sys.path.insert(0, '/opt'); import dar_auto; print('module import ok')"
       - name: Deconvolution smoke test
         # runs the actual C deconvolution on a synthetic spectrum; guards the two
         # prebuilt-binary dependency traps (GLIBCXX for isogen.so, HDF5 soname for unideclinux)

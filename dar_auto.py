@@ -1,34 +1,22 @@
 import sys, os, json, base64, zlib
 import xml.etree.ElementTree as ET
 import numpy as np
-import matplotlib; matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-matplotlib.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Liberation Sans", "Arial", "Helvetica", "DejaVu Sans"],
-    "font.size": 10, "axes.titlesize": 11, "axes.labelsize": 10.5,
-    "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 9,
-    "axes.linewidth": 0.8, "axes.edgecolor": "#333333",
-    "xtick.direction": "out", "ytick.direction": "out",
-    "xtick.major.width": 0.8, "ytick.major.width": 0.8,
-    "xtick.minor.width": 0.6, "ytick.minor.width": 0.6,
-    "xtick.minor.visible": True, "ytick.minor.visible": True,
-    "text.color": "#222222", "axes.labelcolor": "#222222",
-    "xtick.color": "#333333", "ytick.color": "#333333",
-})
-from unidec import engine
-from unidec.UniDecImporter.ImporterFactory import ImporterFactory
 
-_b, _s = os.environ.get("BASE_MASS"), os.environ.get("MOD_MASS")
-if not _b or not _s:
-    sys.exit("set BASE_MASS (unmodified average mass, Da) and MOD_MASS (mass added per conjugation, Da)")
-base, step = float(_b), float(_s)
-mlo = float(os.environ.get("MASS_LB", base - 2000))
-mhi = float(os.environ.get("MASS_UB", base + 3000))
-zlo, zhi = int(os.environ.get("Z_LO", 3)), int(os.environ.get("Z_HI", 20))
-void = float(os.environ.get("VOID_MIN", 2.0))
 trap = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
 _tag = lambda el: el.tag.split("}")[-1]
+
+
+def load_config():
+    b, s = os.environ.get("BASE_MASS"), os.environ.get("MOD_MASS")
+    if not b or not s:
+        raise SystemExit("set BASE_MASS (unmodified average mass, Da) and "
+                         "MOD_MASS (mass added per conjugation, Da)")
+    base, step = float(b), float(s)
+    return dict(base=base, step=step,
+                mlo=float(os.environ.get("MASS_LB", base - 2000)),
+                mhi=float(os.environ.get("MASS_UB", base + 3000)),
+                zlo=int(os.environ.get("Z_LO", 3)), zhi=int(os.environ.get("Z_HI", 20)),
+                void=float(os.environ.get("VOID_MIN", 2.0)))
 
 
 def chromatograms(path):
@@ -91,7 +79,62 @@ def charge_peaks(mz, mass, nmax=6, frac=0.15):
     return [(x[k], y[k], int(round(mass / (x[k] - 1.00728)))) for k in keep]
 
 
+def elution_window(tic, void=2.0):
+    # widest span around the biggest TIC peak (after the void) that stays above half-max
+    t, v = np.asarray(tic).T
+    keep = t >= void
+    t, v = t[keep], v[keep]
+    k = int(np.argmax(v)); thr = v[k] / 2
+    lo = hi = k
+    while lo and v[lo - 1] >= thr: lo -= 1
+    while hi < len(v) - 1 and v[hi + 1] >= thr: hi += 1
+    return float(t[lo]), float(t[hi])
+
+
+def dar_from_massdat(md, base, step, widths=(15, 25, 40, 60)):
+    # DAR anchored at base / base+step; robustness table across integration half-widths
+    table = []
+    for w in widths:
+        a0, a1 = area(md, base - w, base + w), area(md, base + step - w, base + step + w)
+        table.append({"halfwidth_Da": w, "naked_area": round(a0, 1),
+                      "conj_area": round(a1, 1),
+                      "DAR": round(a1 / (a0 + a1) if a0 + a1 else 0, 3)})
+    return table[1]["DAR"], table   # headline = +/-25 Da band
+
+
+_PLT = None
+
+
+def _mpl():
+    global _PLT
+    if _PLT is None:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        matplotlib.rcParams.update({
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Liberation Sans", "Arial", "Helvetica", "DejaVu Sans"],
+            "font.size": 10, "axes.titlesize": 11, "axes.labelsize": 10.5,
+            "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 9,
+            "axes.linewidth": 0.8, "axes.edgecolor": "#333333",
+            "xtick.direction": "out", "ytick.direction": "out",
+            "xtick.major.width": 0.8, "ytick.major.width": 0.8,
+            "xtick.minor.width": 0.6, "ytick.minor.width": 0.6,
+            "xtick.minor.visible": True, "ytick.minor.visible": True,
+            "text.color": "#222222", "axes.labelcolor": "#222222",
+            "xtick.color": "#333333", "ytick.color": "#333333",
+        })
+        _PLT = plt
+    return _PLT
+
+
 def analyze(path, out):
+    from unidec import engine
+    from unidec.UniDecImporter.ImporterFactory import ImporterFactory
+    cfg = load_config()
+    base, step = cfg["base"], cfg["step"]
+    plt = _mpl()
+
     name = os.path.splitext(os.path.basename(path))[0]
     tag = name.replace(" ", "_")
     ch = chromatograms(path)
@@ -105,26 +148,19 @@ def analyze(path, out):
         return None
     tic = pick("TIC")
     uv = pick("Sig=280", "280", "uv", "absorb")   # DAD/UV if present (any vendor); else None
-    if tic is None:                                  # some vendors omit a TIC chromatogram in mzML
+    if tic is None:                               # some vendors omit a TIC chromatogram in mzML
         tic = np.asarray(imp.get_tic())
 
     if os.environ.get("TMIN") and os.environ.get("TMAX"):
         tmin, tmax = float(os.environ["TMIN"]), float(os.environ["TMAX"])
     else:
-        # widest span around the biggest TIC peak (after the void) that stays above half-max
-        t, v = tic.T
-        keep = t >= void; t, v = t[keep], v[keep]
-        k = int(np.argmax(v)); thr = v[k] / 2
-        lo = hi = k
-        while lo and v[lo - 1] >= thr: lo -= 1
-        while hi < len(v) - 1 and v[hi + 1] >= thr: hi += 1
-        tmin, tmax = float(t[lo]), float(t[hi])
+        tmin, tmax = elution_window(tic, cfg["void"])
 
     spec = os.path.join(out, "_avg_%s.txt" % tag)
     np.savetxt(spec, np.asarray(imp.get_avg_scan(time_range=(tmin, tmax))))
     e = engine.UniDec(); e.open_file(spec)
-    e.config.startz, e.config.endz = zlo, zhi
-    e.config.masslb, e.config.massub = mlo, mhi
+    e.config.startz, e.config.endz = cfg["zlo"], cfg["zhi"]
+    e.config.masslb, e.config.massub = cfg["mlo"], cfg["mhi"]
     e.config.massbins = 1.0
     e.config.minmz, e.config.maxmz = 600.0, 2200.0
     e.process_data()
@@ -135,13 +171,7 @@ def analyze(path, out):
         raise RuntimeError("empty deconvolution (massdat %s)" % (md.shape,))
     md[:, 1] *= 100.0 / md[:, 1].max()
 
-    # DAR with masses ANCHORED at base / base+step; report robustness across integration widths
-    table = []
-    for w in (15, 25, 40, 60):
-        a0, a1 = area(md, base - w, base + w), area(md, base + step - w, base + step + w)
-        table.append({"halfwidth_Da": w, "naked_area": round(a0, 1),
-                      "conj_area": round(a1, 1), "DAR": round(a1 / (a0 + a1) if a0 + a1 else 0, 3)})
-    dar = table[1]["DAR"]   # headline = +/-25 Da band
+    dar, table = dar_from_massdat(md, base, step)
     mz = np.asarray(e.data.data2)   # processed m/z envelope (the input to deconvolution)
 
     def uv_h(arr, a, b):
@@ -163,7 +193,6 @@ def analyze(path, out):
     prim, sec, shade, band = "#1f4e79", "#9aa0a6", "#f6dfae", "#cfd8e3"
     fig, (axA, axB, axC) = plt.subplots(3, 1, figsize=(7.2, 10.2))
 
-    # (a) chromatograms
     if tic is not None:
         axA.plot(tic[:, 0], tic[:, 1] / tic[:, 1].max() * 100, color=sec, lw=0.9, label="MS TIC")
     if uv is not None:
@@ -175,7 +204,6 @@ def analyze(path, out):
     axA.legend(loc="upper right", frameon=False, handlelength=1.4)
     axA.spines[["top", "right"]].set_visible(False)
 
-    # (b) raw charge-state envelope UniDec actually deconvolved
     axB.plot(mz[:, 0], mz[:, 1] / mz[:, 1].max() * 100, color=prim, lw=0.8)
     dom = base + step if dar >= 0.5 else base
     for x0, y0, z in charge_peaks(mz, dom):
@@ -188,7 +216,6 @@ def analyze(path, out):
                   loc="left", fontsize=9.5, color="#666666")
     axB.spines[["top", "right"]].set_visible(False)
 
-    # (c) deconvolved mass; DAR integration bands shaded, adducts labelled on the dominant species
     ymax = 120
     for lo_, hi_ in [(base - 25, base + 25), (base + step - 25, base + step + 25)]:
         axC.axvspan(lo_, hi_, color=band, alpha=0.6, lw=0)
