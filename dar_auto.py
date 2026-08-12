@@ -68,9 +68,27 @@ def area(md, lo, hi):
     return float(trap(md[m, 1], md[m, 0])) if m.any() else 0.0
 
 
-def apex(md, target, w=40):
+def apex(md, target, w=15):
     m = (md[:, 0] >= target - w) & (md[:, 0] <= target + w)
-    return float(md[m][np.argmax(md[m, 1]), 0]) if m.any() else None
+    if not m.any():
+        return None, 0.0
+    s = md[m]
+    k = int(np.argmax(s[:, 1]))
+    return float(s[k, 0]), float(s[k, 1])
+
+
+def charge_peaks(mz, mass, nmax=6, frac=0.15):
+    # local maxima in the m/z envelope, one label per charge state (the tallest peak for that z)
+    x, y = mz[:, 0], mz[:, 1]
+    thr = frac * y.max()
+    idx = [k for k in range(2, len(y) - 2) if y[k] > thr and y[k] == max(y[k - 2:k + 3])]
+    best = {}
+    for k in idx:
+        z = int(round(mass / (x[k] - 1.00728)))
+        if z > 0 and (z not in best or y[k] > y[best[z]]):
+            best[z] = k
+    keep = sorted(best.values(), key=lambda k: -y[k])[:nmax]
+    return [(x[k], y[k], int(round(mass / (x[k] - 1.00728)))) for k in keep]
 
 
 def analyze(path, out):
@@ -113,6 +131,7 @@ def analyze(path, out):
         table.append({"halfwidth_Da": w, "naked_area": round(a0, 1),
                       "conj_area": round(a1, 1), "DAR": round(a1 / (a0 + a1) if a0 + a1 else 0, 3)})
     dar = table[1]["DAR"]   # headline = +/-25 Da band
+    mz = np.asarray(e.data.data2)   # processed m/z envelope (the input to deconvolution)
 
     def uv_h(arr, a, b):
         if arr is None: return None
@@ -120,10 +139,20 @@ def analyze(path, out):
         return round(float(arr[m, 1].max()), 3) if m.any() else 0.0
     uv_main, uv_late = uv_h(uv280, tmin - .3, tmax + .3), uv_h(uv280, 18, 22)
 
-    # ---- publication figure: (a) chromatograms, (b) deconvolved mass ----
-    prim, sec, shade = "#1f4e79", "#9aa0a6", "#f6dfae"
-    fig, (axA, axB) = plt.subplots(2, 1, figsize=(7.2, 7.4))
+    # report a measured apex only for a species that is actually present (>=10%);
+    # a trace species gets None instead of a peak-picker noise bump near the anchor.
+    nm, _ = apex(md, base)
+    cm, _ = apex(md, base + step)
+    naked_apex = round(nm, 1) if (nm is not None and (1 - dar) >= 0.10) else None
+    conj_apex = round(cm, 1) if (cm is not None and dar >= 0.10) else None
+    trace = ("unmodified <10%, not separately resolved" if (1 - dar) < 0.10
+             else "conjugate <10%, not separately resolved" if dar < 0.10 else None)
 
+    # ---- figure: (a) chromatograms, (b) raw m/z envelope, (c) deconvolved mass ----
+    prim, sec, shade, band = "#1f4e79", "#9aa0a6", "#f6dfae", "#cfd8e3"
+    fig, (axA, axB, axC) = plt.subplots(3, 1, figsize=(7.2, 10.2))
+
+    # (a) chromatograms
     if tic is not None:
         axA.plot(tic[:, 0], tic[:, 1] / tic[:, 1].max() * 100, color=sec, lw=0.9, label="MS TIC")
     if uv280 is not None:
@@ -135,24 +164,47 @@ def analyze(path, out):
     axA.legend(loc="upper right", frameon=False, handlelength=1.4)
     axA.spines[["top", "right"]].set_visible(False)
 
-    ymax = 120
-    axB.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
-    axB.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
-    for m, lab in [(base, "unmodified"), (base + step, "+1")]:
-        h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
-        axB.annotate("%s\n%.0f Da" % (lab, m), xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
-                     ha="center", va="bottom", fontsize=9, color="#222222",
-                     arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
-    axB.set_xlim(base - 400, base + step + 500); axB.set_ylim(0, ymax)
-    axB.set_xlabel("deconvolved mass (Da)"); axB.set_ylabel("relative abundance (%)")
-    axB.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axB.transAxes,
-             va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
+    # (b) raw charge-state envelope UniDec actually deconvolved
+    axB.plot(mz[:, 0], mz[:, 1] / mz[:, 1].max() * 100, color=prim, lw=0.8)
+    dom = base + step if dar >= 0.5 else base
+    for x0, y0, z in charge_peaks(mz, dom):
+        axB.annotate("%d+" % z, xy=(x0, y0 / mz[:, 1].max() * 100),
+                     xytext=(0, 3), textcoords="offset points", ha="center",
+                     fontsize=7.5, color="#666666")
+    axB.set_xlim(mz[:, 0].min(), mz[:, 0].max()); axB.set_ylim(0, 112)
+    axB.set_xlabel("m/z"); axB.set_ylabel("relative intensity (%)")
+    axB.set_title("raw charge-state envelope (input to deconvolution)",
+                  loc="left", fontsize=9.5, color="#666666")
     axB.spines[["top", "right"]].set_visible(False)
 
-    for ax, letter in [(axA, "a"), (axB, "b")]:
+    # (c) deconvolved mass; DAR integration bands shaded, adducts labelled on the dominant species
+    ymax = 120
+    for lo_, hi_ in [(base - 25, base + 25), (base + step - 25, base + step + 25)]:
+        axC.axvspan(lo_, hi_, color=band, alpha=0.6, lw=0)
+    axC.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
+    axC.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
+    for m, lab in [(base, "unmodified"), (base + step, "+1")]:
+        h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
+        axC.annotate("%s\n%.0f Da" % (lab, m), xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
+                     ha="center", va="bottom", fontsize=9, color="#222222",
+                     arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
+    for da, lab in [(16, "+16"), (178, "+178")]:
+        am = dom + da
+        if md[0, 0] <= am <= md[-1, 0]:
+            h = float(md[np.argmin(abs(md[:, 0] - am)), 1])
+            if h > 4:
+                axC.annotate(lab, xy=(am, h), xytext=(0, 3), textcoords="offset points",
+                             ha="center", fontsize=7, color="#999999")
+    axC.set_xlim(base - 400, base + step + 500); axC.set_ylim(0, ymax)
+    axC.set_xlabel("deconvolved mass (Da)"); axC.set_ylabel("relative abundance (%)")
+    axC.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axC.transAxes,
+             va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
+    axC.spines[["top", "right"]].set_visible(False)
+
+    for ax, letter in [(axA, "a"), (axB, "b"), (axC, "c")]:
         ax.text(-0.09, 1.02, letter, transform=ax.transAxes, fontsize=13, fontweight="bold")
-    fig.suptitle(name, x=0.5, y=0.995, fontsize=10, color="#666666")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.suptitle(name, x=0.5, y=0.997, fontsize=10, color="#666666")
+    fig.tight_layout(rect=(0, 0, 1, 0.99))
     figpath = os.path.join(out, "dar_%s.png" % tag)
     fig.savefig(figpath, dpi=300)
     fig.savefig(figpath[:-4] + ".pdf")   # vector, for reports
@@ -161,7 +213,7 @@ def analyze(path, out):
 
     return {"file": os.path.basename(path), "window_min": [round(tmin, 2), round(tmax, 2)],
             "DAR": dar, "conjugated_pct": round(dar * 100, 1),
-            "conj_apex": apex(md, base + step), "naked_apex": apex(md, base),
+            "conj_apex": conj_apex, "naked_apex": naked_apex, "trace": trace,
             "expected": [base, round(base + step, 2)],
             "DAR_by_window": table,
             "UV280_main_h": uv_main, "UV280_late_h": uv_late,
