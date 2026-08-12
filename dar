@@ -15,12 +15,15 @@ fi
 "${dk[@]}" image inspect unidec-linux >/dev/null 2>&1 || "${dk[@]}" build -t unidec-linux "$here"
 "${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
 
+# any vendor raw ProteoWizard reads: Agilent/Bruker .d, Thermo/Waters .raw, SCIEX .wiff/.wiff2
 shopt -s nullglob
-for d in "$dir"/*.d; do
-    m="$dir/$(basename "$d" .d).mzML"
+for raw in "$dir"/*.d "$dir"/*.raw "$dir"/*.wiff "$dir"/*.wiff2; do
+    b="$(basename "$raw")"
+    m="$dir/${b%.*}.mzML"
     [ -f "$m" ] && continue
+    echo ">> converting $b -> mzML"
     "${dk[@]}" run --rm -e WINEDEBUG=-all -v "$dir":/data "$pwiz" \
-        wine_anyuser msconvert "/data/$(basename "$d")" \
+        wine_anyuser msconvert "/data/$b" \
         --mzML --32 --zlib --filter "peakPicking vendor msLevel=1-" -o /data
 done
 
@@ -32,3 +35,6 @@ args=(); for f in "${mz[@]}"; do args+=("/data/$(basename "$f")"); done
     ${MASS_LB:+-e MASS_LB="$MASS_LB"} ${MASS_UB:+-e MASS_UB="$MASS_UB"} \
     ${TMIN:+-e TMIN="$TMIN"} ${TMAX:+-e TMAX="$TMAX"} \
     -v "$dir":/data unidec-linux python3 /opt/dar_auto.py "${args[@]}"
+
+# UniDec license: pass the citation request on to the end user
+echo ">> Deconvolution by UniDec (Marty et al., Anal. Chem. 2015, doi:10.1021/acs.analchem.5b00140) -- please cite."

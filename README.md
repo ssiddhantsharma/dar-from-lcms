@@ -6,9 +6,11 @@ DAR (drug/modifier-to-protein ratio) from intact-mass LC-MS, via UniDec, in one 
 
     BASE_MASS=<unmodified avg mass Da> MOD_MASS=<Da added per conjugation> ./dar /path/to/run_dir
 
-Converts Agilent `.d` to mzML (ProteoWizard), deconvolves each spectrum, and writes the
-unmodified and +1 masses, the conjugated fraction and DAR, plus a plot per sample. Written for a
-single conjugation site (one reactive residue), where DAR is occupancy 0-1.
+Converts vendor raw (Agilent/Bruker `.d`, Thermo/Waters `.raw`, SCIEX `.wiff`, via ProteoWizard) to
+mzML, deconvolves each spectrum, and writes the unmodified and +1 masses, the conjugated fraction
+and DAR, plus a plot per sample. Written for a single conjugation site (one reactive residue), where
+DAR is occupancy 0-1. The deconvolution/DAR works on any mzML; the UV-280 panel is drawn when the
+mzML carries a UV/DAD chromatogram (labelled per Agilent's convention, matched loosely for others).
 
 For how the measurement and the scripts work end to end, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 
@@ -57,3 +59,14 @@ UniDec ships two prebuilt binaries with conflicting needs: `isogen.so` wants GLI
 explicit `libhdf5-103-1t64` runtime satisfies both (not `libhdf5-dev`, which pulls HDF5 1.14 /
 `.so.310`). Install UniDec from git, not the stale PyPI release. Keep the `pip install` layer
 before the `COPY`, and don't `docker builder prune`, or you evict the ~10-min UniDec build.
+
+## Credits and citation
+
+The deconvolution is done by [UniDec](https://github.com/michaelmarty/UniDec), used here under its
+license. If you use this tool in a publication, please cite:
+
+> Marty, M. T. et al. *Bayesian Deconvolution of Mass and Ion Mobility Spectra.*
+> Anal. Chem. 2015, 87 (8), 4370-4376. doi:[10.1021/acs.analchem.5b00140](https://doi.org/10.1021/acs.analchem.5b00140)
+
+Raw-to-mzML conversion uses [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`).
+This project is an independent wrapper and is not endorsed by or affiliated with the UniDec authors.

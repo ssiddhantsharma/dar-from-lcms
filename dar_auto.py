@@ -95,13 +95,23 @@ def analyze(path, out):
     name = os.path.splitext(os.path.basename(path))[0]
     tag = name.replace(" ", "_")
     ch = chromatograms(path)
-    pick = lambda s: next((ch[k] for k in ch if s in k), None)
-    tic, uv280 = pick("TIC"), pick("Sig=280")
+    imp = ImporterFactory.create_importer(path)
+
+    def pick(*subs):   # first chromatogram whose id contains any of subs (case-insensitive)
+        for s in subs:
+            for k in ch:
+                if s.lower() in k.lower():
+                    return ch[k]
+        return None
+    tic = pick("TIC")
+    uv = pick("Sig=280", "280", "uv", "absorb")   # DAD/UV if present (any vendor); else None
+    if tic is None:                                  # some vendors omit a TIC chromatogram in mzML
+        tic = np.asarray(imp.get_tic())
 
     if os.environ.get("TMIN") and os.environ.get("TMAX"):
         tmin, tmax = float(os.environ["TMIN"]), float(os.environ["TMAX"])
     else:
-        # reuse the TIC already parsed above; find the widest span above half-max after the void
+        # widest span around the biggest TIC peak (after the void) that stays above half-max
         t, v = tic.T
         keep = t >= void; t, v = t[keep], v[keep]
         k = int(np.argmax(v)); thr = v[k] / 2
@@ -110,7 +120,6 @@ def analyze(path, out):
         while hi < len(v) - 1 and v[hi + 1] >= thr: hi += 1
         tmin, tmax = float(t[lo]), float(t[hi])
 
-    imp = ImporterFactory.create_importer(path)
     spec = os.path.join(out, "_avg_%s.txt" % tag)
     np.savetxt(spec, np.asarray(imp.get_avg_scan(time_range=(tmin, tmax))))
     e = engine.UniDec(); e.open_file(spec)
@@ -137,7 +146,7 @@ def analyze(path, out):
         if arr is None: return None
         m = (arr[:, 0] >= a) & (arr[:, 0] <= b)
         return round(float(arr[m, 1].max()), 3) if m.any() else 0.0
-    uv_main, uv_late = uv_h(uv280, tmin - .3, tmax + .3), uv_h(uv280, 18, 22)
+    uv_main, uv_late = uv_h(uv, tmin - .3, tmax + .3), uv_h(uv, 18, 22)
 
     # report a measured apex only for a species that is actually present (>=10%);
     # a trace species gets None instead of a peak-picker noise bump near the anchor.
@@ -155,8 +164,8 @@ def analyze(path, out):
     # (a) chromatograms
     if tic is not None:
         axA.plot(tic[:, 0], tic[:, 1] / tic[:, 1].max() * 100, color=sec, lw=0.9, label="MS TIC")
-    if uv280 is not None:
-        axA.plot(uv280[:, 0], uv280[:, 1] / np.abs(uv280[:, 1]).max() * 100,
+    if uv is not None:
+        axA.plot(uv[:, 0], uv[:, 1] / np.abs(uv[:, 1]).max() * 100,
                  color=prim, lw=1.4, label="UV 280 nm")
     axA.axvspan(tmin, tmax, color=shade, alpha=0.7, lw=0)
     axA.set_xlim(0, max(25, tmax + 3)); axA.set_ylim(-2, 108)
