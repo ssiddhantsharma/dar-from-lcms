@@ -7,9 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip git ca-certificates \
         libhdf5-103-1t64 libhdf5-hl-100t64 libfftw3-dev libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-RUN pip3 install --break-system-packages --no-cache-dir \
-        git+https://github.com/michaelmarty/UniDec.git
-# Arial-metric font for publication-style figures (separate layer keeps the pip cache intact)
+# requirements before COPY so editing dar_auto.py never re-triggers the (slow) install
+COPY requirements.txt .
+RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
+# Arial-metric font for publication-style figures
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 COPY dar_auto.py /opt/dar_auto.py

@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  pull_request:
+    paths-ignore: ["**.md"]
+
+# a new push to the same ref cancels the previous run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ruff (real errors only)
+        run: pipx run ruff check --select F dar_auto.py
+      - name: shellcheck the wrapper
+        run: shellcheck -S error dar
+
+  build:
+    runs-on: ubuntu-latest   # native x86_64; no emulation, unlike an Apple-Silicon Mac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (GitHub-cached layers)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: unidec-linux:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deconvolution smoke test
+        # runs the actual C deconvolution on a synthetic spectrum; guards the two
+        # prebuilt-binary dependency traps (GLIBCXX for isogen.so, HDF5 soname for unideclinux)
+        run: |
+          docker run --rm -i unidec-linux:ci python3 - <<'PY'
+          from unidec import engine
+          import numpy as np
+          e = engine.UniDec()
+          e.open_test_spectrum(masslist=[10000.0])
+          e.process_data(); e.run_unidec(silent=True)
+          md = np.asarray(e.data.massdat)
+          assert md.ndim == 2 and len(md) > 0, "no deconvolution output"
+          m = md[np.argmax(md[:, 1]), 0]
+          assert abs(m - 10000) < 20, f"bad recovered mass {m}"
+          print("smoke ok: recovered", round(m), "Da")
+          PY

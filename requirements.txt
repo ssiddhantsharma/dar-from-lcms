@@ -1,0 +1,8 @@
+# Python dependencies for the DAR analysis (installed inside the Docker image).
+# UniDec has no usable PyPI release, so it is pinned to a validated git commit
+# for reproducible builds. The scientific stack is pinned to the versions the
+# image was validated with; UniDec also pulls its own remaining dependencies.
+unidec @ git+https://github.com/michaelmarty/UniDec.git@bae1a59345a1f2353bb2fde9821c78ae05b8cf85
+numpy==2.5.2
+scipy==1.18.0
+matplotlib==3.11.1

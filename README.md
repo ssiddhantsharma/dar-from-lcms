@@ -1,5 +1,7 @@
 # dar-from-lcms
 
+[![ci](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml/badge.svg)](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml)
+
 DAR (drug/modifier-to-protein ratio) from intact-mass LC-MS, via UniDec, in one command:
 
     BASE_MASS=<unmodified avg mass Da> MOD_MASS=<Da added per conjugation> ./dar /path/to/run_dir

@@ -1,0 +1,10 @@
+.git
+.github
+*.md
+*.mzML
+*.d
+dar_*.png
+dar_*.pdf
+massdat_*.txt
+*_unidecfiles
+__pycache__
