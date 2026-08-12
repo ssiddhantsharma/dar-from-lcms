@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# ./dar <dir>   -- convert any .d to mzML, deconvolve each with UniDec, print/save DAR.
+set -euo pipefail
+
+dir="$(cd "${1:?usage: dar <dir with .d and/or .mzML>}" && pwd)"
+here="$(cd "$(dirname "$0")" && pwd)"
+ctx="${COLIMA_CONTEXT:-colima-x86}"
+pwiz="chambm/pwiz-skyline-i-agree-to-the-vendor-licenses"
+dk=(docker --context "$ctx")
+
+# x86_64 VM needed (Wine won't run under Rosetta)
+if ! colima list 2>/dev/null | awk '$1=="x86"{print $2}' | grep -qi running; then
+    colima start x86 --arch x86_64 --vm-type qemu --cpu 4 --memory 8 --disk 60
+fi
+"${dk[@]}" image inspect unidec-linux >/dev/null 2>&1 || "${dk[@]}" build -t unidec-linux "$here"
+"${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
+
+shopt -s nullglob
+for d in "$dir"/*.d; do
+    m="$dir/$(basename "$d" .d).mzML"
+    [ -f "$m" ] && continue
+    "${dk[@]}" run --rm -e WINEDEBUG=-all -v "$dir":/data "$pwiz" \
+        wine_anyuser msconvert "/data/$(basename "$d")" \
+        --mzML --32 --zlib --filter "peakPicking vendor msLevel=1-" -o /data
+done
+
+mz=("$dir"/*.mzML); [ ${#mz[@]} -gt 0 ] || { echo "no mzML in $dir"; exit 1; }
+args=(); for f in "${mz[@]}"; do args+=("/data/$(basename "$f")"); done
+"${dk[@]}" run --rm \
+    -e BASE_MASS="${BASE_MASS:?set BASE_MASS=<unmodified avg mass in Da>}" \
+    -e MOD_MASS="${MOD_MASS:?set MOD_MASS=<Da added per conjugation>}" \
+    ${MASS_LB:+-e MASS_LB="$MASS_LB"} ${MASS_UB:+-e MASS_UB="$MASS_UB"} \
+    ${TMIN:+-e TMIN="$TMIN"} ${TMAX:+-e TMAX="$TMAX"} \
+    -v "$dir":/data unidec-linux python3 /opt/dar_auto.py "${args[@]}"

@@ -1,0 +1,10 @@
+*.mzML
+*.d/
+_avg_*
+_ud_*
+massdat_*.txt
+dar_*.png
+dar_auto_results.json
+*_unidecfiles/
+__pycache__/
+*.pyc
