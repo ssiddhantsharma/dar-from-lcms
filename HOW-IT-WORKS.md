@@ -1,5 +1,3 @@
-# How it works
-
 A walkthrough of what this tool measures, how the measurement physically works, and how the two
 scripts turn a folder of raw LC-MS runs into a DAR number and a figure.
 
@@ -126,27 +124,7 @@ result.
 
 ---
 
-## 7. What the UV trace can and cannot do
-
-280 nm absorbance is stoichiometric for protein (Trp/Tyr), and most small modifiers do not absorb
-there, so **if the unmodified and conjugated forms elute as two separate LC peaks**, the ratio of
-their UV areas is a DAR that is independent of how each species ionizes. That independence is why
-UV is prized as an orthogonal QC check.
-
-The catch: UV knows nothing about mass, so it can only separate species that come off the column at
-**different times**. A small, hydrophilic modifier on a larger protein barely changes retention, so
-the two forms often **co-elute** into one UV peak — and then UV cannot split them. In that case UV
-still earns its place: it confirms the protein is a single clean peak (so you deconvolved the right
-thing) and flags whether any other chromatographic feature is protein or just matrix. But the DAR
-itself comes from the mass spectrum, and the orthogonal validation is the control, not the UV.
-
-To *get* a UV-based DAR when species co-elute, you would try to resolve them chromatographically
-(shallower gradient, different column/temperature, or HIC). There is no guarantee a small hydrophilic
-modifier will separate.
-
----
-
-## 8. Honest limits
+## 7. Honest limits
 
 - **The exact percentage assumes equal ionization** of the unmodified and modified species. This is
   reasonable for a single small modification but is not proven by the measurement; treat the number
@@ -160,12 +138,3 @@ modifier will separate.
 - **Deconvolve the elution window, not the whole run.** Averaging the entire run buries the protein
   in solvent/background and produces a noisy "grass" spectrum.
 
----
-
-## 9. Why the environment is set up the way it is
-
-UniDec ships two prebuilt binaries with conflicting system requirements: one needs a newer
-`libstdc++` (GCC 14) and the other needs an older HDF5 shared library. A single stock base does not
-satisfy both, which is why the Dockerfile pins a specific Ubuntu release plus an explicit HDF5
-runtime package. The `pip install` layer is placed before the script `COPY` so editing the analysis
-never re-triggers the (slow) install. See the Dockerfile comments and `README.md` for specifics.
