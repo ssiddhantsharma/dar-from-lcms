@@ -127,7 +127,9 @@ def analyze(path, out):
     e.config.masslb, e.config.massub = mlo, mhi
     e.config.massbins = 1.0
     e.config.minmz, e.config.maxmz = 600.0, 2200.0
-    e.process_data(); e.run_unidec(silent=True)
+    e.process_data()
+    e.get_auto_peak_width()   # match peak width to the data's resolution (vs UniDec's fixed default)
+    e.run_unidec(silent=True)
     md = np.asarray(e.data.massdat)
     if md.ndim != 2 or not len(md):
         raise RuntimeError("empty deconvolution (massdat %s)" % (md.shape,))
@@ -222,6 +224,7 @@ def analyze(path, out):
 
     return {"file": os.path.basename(path), "window_min": [round(tmin, 2), round(tmax, 2)],
             "DAR": dar, "conjugated_pct": round(dar * 100, 1),
+            "peak_width_mz": round(float(e.config.mzsig), 3),
             "conj_apex": conj_apex, "naked_apex": naked_apex, "trace": trace,
             "expected": [base, round(base + step, 2)],
             "DAR_by_window": table,

@@ -70,3 +70,11 @@ license. If you use this tool in a publication, please cite:
 
 Raw-to-mzML conversion uses [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`).
 This project is an independent wrapper and is not endorsed by or affiliated with the UniDec authors.
+
+## Related work
+
+UniDec ships MetaUniDec (batch chromatogram deconvolution) and UPP, the UniDec Processing Pipeline
+for biotherapeutic MS. This project is a small, focused companion to those: one command that
+auto-picks the protein elution window, computes DAR, and emits a report figure, packaged to run
+reproducibly via Docker. It uses UniDec's own auto peak-width detection so the deconvolution adapts
+to the instrument's resolution.
