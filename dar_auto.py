@@ -3,6 +3,19 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+matplotlib.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Liberation Sans", "Arial", "Helvetica", "DejaVu Sans"],
+    "font.size": 10, "axes.titlesize": 11, "axes.labelsize": 10.5,
+    "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 9,
+    "axes.linewidth": 0.8, "axes.edgecolor": "#333333",
+    "xtick.direction": "out", "ytick.direction": "out",
+    "xtick.major.width": 0.8, "ytick.major.width": 0.8,
+    "xtick.minor.width": 0.6, "ytick.minor.width": 0.6,
+    "xtick.minor.visible": True, "ytick.minor.visible": True,
+    "text.color": "#222222", "axes.labelcolor": "#222222",
+    "xtick.color": "#333333", "ytick.color": "#333333",
+})
 from unidec import engine
 from unidec.UniDecImporter.ImporterFactory import ImporterFactory
 
@@ -107,31 +120,43 @@ def analyze(path, out):
         return round(float(arr[m, 1].max()), 3) if m.any() else 0.0
     uv_main, uv_late = uv_h(uv280, tmin - .3, tmax + .3), uv_h(uv280, 18, 22)
 
-    # ---- 2-panel figure ----
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 8))
-    if tic is not None:
-        ax1.plot(tic[:, 0], tic[:, 1] / tic[:, 1].max() * 100, color="#aaa", lw=1, label="MS TIC")
-    if uv280 is not None:
-        ax1.plot(uv280[:, 0], uv280[:, 1] / np.abs(uv280[:, 1]).max() * 100,
-                 color="#1f4e79", lw=1.2, label="UV 280 nm")
-    ax1.axvspan(tmin, tmax, color="#f0a500", alpha=.25)
-    ax1.set_xlim(0, max(25, tmax + 3)); ax1.set_ylim(-3, 105)
-    ax1.set_xlabel("retention time (min)"); ax1.set_ylabel("relative signal (%)")
-    ax1.set_title("%s   protein window %.1f-%.1f min" % (name, tmin, tmax),
-                  fontsize=12, fontweight="bold")
-    ax1.legend(fontsize=9, frameon=False); ax1.spines[["top", "right"]].set_visible(False)
+    # ---- publication figure: (a) chromatograms, (b) deconvolved mass ----
+    prim, sec, shade = "#1f4e79", "#9aa0a6", "#f6dfae"
+    fig, (axA, axB) = plt.subplots(2, 1, figsize=(7.2, 7.4))
 
-    ax2.fill_between(md[:, 0], md[:, 1], color="#1f4e79", lw=0, alpha=.88)
-    for m, lab in [(base, "unconjugated"), (base + step, "+1")]:
-        h = md[np.argmin(abs(md[:, 0] - m)), 1]
-        ax2.annotate("%s\n%.0f Da" % (lab, m), xy=(m, h), xytext=(m, min(h + 20, 112)),
-                     ha="center", fontsize=9.5, fontweight="bold",
-                     arrowprops=dict(arrowstyle="-", color="#888", lw=.8))
-    ax2.set_xlim(base - 400, base + step + 500); ax2.set_ylim(0, 125)
-    ax2.set_xlabel("deconvolved mass (Da)"); ax2.set_ylabel("relative abundance (%)")
-    ax2.set_title("DAR %.2f   ·   %.0f%% conjugated" % (dar, dar * 100), fontsize=12)
-    ax2.spines[["top", "right"]].set_visible(False); ax2.grid(axis="y", ls=":", alpha=.4)
-    fig.tight_layout(); fig.savefig(os.path.join(out, "dar_%s.png" % tag), dpi=150); plt.close(fig)
+    if tic is not None:
+        axA.plot(tic[:, 0], tic[:, 1] / tic[:, 1].max() * 100, color=sec, lw=0.9, label="MS TIC")
+    if uv280 is not None:
+        axA.plot(uv280[:, 0], uv280[:, 1] / np.abs(uv280[:, 1]).max() * 100,
+                 color=prim, lw=1.4, label="UV 280 nm")
+    axA.axvspan(tmin, tmax, color=shade, alpha=0.7, lw=0)
+    axA.set_xlim(0, max(25, tmax + 3)); axA.set_ylim(-2, 108)
+    axA.set_xlabel("retention time (min)"); axA.set_ylabel("relative signal (%)")
+    axA.legend(loc="upper right", frameon=False, handlelength=1.4)
+    axA.spines[["top", "right"]].set_visible(False)
+
+    ymax = 120
+    axB.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
+    axB.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
+    for m, lab in [(base, "unmodified"), (base + step, "+1")]:
+        h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
+        axB.annotate("%s\n%.0f Da" % (lab, m), xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
+                     ha="center", va="bottom", fontsize=9, color="#222222",
+                     arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
+    axB.set_xlim(base - 400, base + step + 500); axB.set_ylim(0, ymax)
+    axB.set_xlabel("deconvolved mass (Da)"); axB.set_ylabel("relative abundance (%)")
+    axB.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axB.transAxes,
+             va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
+    axB.spines[["top", "right"]].set_visible(False)
+
+    for ax, letter in [(axA, "a"), (axB, "b")]:
+        ax.text(-0.09, 1.02, letter, transform=ax.transAxes, fontsize=13, fontweight="bold")
+    fig.suptitle(name, x=0.5, y=0.995, fontsize=10, color="#666666")
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    figpath = os.path.join(out, "dar_%s.png" % tag)
+    fig.savefig(figpath, dpi=300)
+    fig.savefig(figpath[:-4] + ".pdf")   # vector, for reports
+    plt.close(fig)
     os.remove(spec)
 
     return {"file": os.path.basename(path), "window_min": [round(tmin, 2), round(tmax, 2)],

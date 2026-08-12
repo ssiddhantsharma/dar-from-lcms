@@ -8,3 +8,4 @@ dar_auto_results.json
 *_unidecfiles/
 __pycache__/
 *.pyc
+dar_*.pdf

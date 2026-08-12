@@ -9,5 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN pip3 install --break-system-packages --no-cache-dir \
         git+https://github.com/michaelmarty/UniDec.git
+# Arial-metric font for publication-style figures (separate layer keeps the pip cache intact)
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
 COPY dar_auto.py /opt/dar_auto.py
 WORKDIR /work
