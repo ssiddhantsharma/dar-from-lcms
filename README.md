@@ -14,6 +14,12 @@ mzML carries a UV/DAD chromatogram (labelled per Agilent's convention, matched l
 
 For how the measurement and the scripts work end to end, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 
+## Example output
+
+![example output](examples/demo.png)
+
+Synthetic, illustrative data (placeholder masses) — regenerate with `python examples/make_demo.py`.
+
 ## Setup
 
     brew install colima docker qemu lima-additional-guestagents   # macOS
