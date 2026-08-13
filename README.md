@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml/badge.svg)](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/ssiddhantsharma/dar-from-lcms)](https://github.com/ssiddhantsharma/dar-from-lcms/releases/latest)
+[![ghcr image](https://img.shields.io/badge/ghcr.io-image-2496ED?logo=docker&logoColor=white)](https://github.com/ssiddhantsharma/dar-from-lcms/pkgs/container/dar-from-lcms)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DAR (drug/modifier-to-protein ratio) from intact-mass LC-MS, via UniDec, in one command:
