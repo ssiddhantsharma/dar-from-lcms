@@ -18,7 +18,7 @@ For how the measurement and the scripts work end to end, see [HOW-IT-WORKS.md](H
 
 ![example output](examples/demo.png)
 
-Synthetic, illustrative data (placeholder masses) — regenerate with `python examples/make_demo.py`.
+Synthetic, illustrative data (placeholder masses), regenerate with `python examples/make_demo.py`.
 
 ## Setup
 
