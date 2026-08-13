@@ -1,35 +1,57 @@
 #!/usr/bin/env bash
-# ./dar <dir>   -- convert any .d to mzML, deconvolve each with UniDec, print/save DAR.
+# ./dar <dir>   convert vendor raw to mzML, deconvolve each with UniDec, print/save DAR.
+#
+# Cool mode (Apple Silicon):  ANALYZE_CONTEXT=colima-rosetta ./dar <dir>
+#   runs the analysis under Rosetta (fast, cool) and uses the slow QEMU VM only for the
+#   one-time raw->mzML conversion (Wine won't run under Rosetta). Re-analysing already-
+#   converted mzML then never starts QEMU at all.
 set -euo pipefail
 
-dir="$(cd "${1:?usage: dar <dir with .d and/or .mzML>}" && pwd)"
+dir="$(cd "${1:?usage: dar <dir with vendor raw and/or .mzML>}" && pwd)"
 here="$(cd "$(dirname "$0")" && pwd)"
-ctx="${COLIMA_CONTEXT:-colima-x86}"
+ctx="${COLIMA_CONTEXT:-colima-x86}"          # conversion context (QEMU; Wine needs full emulation)
+actx="${ANALYZE_CONTEXT:-$ctx}"              # analysis context (set colima-rosetta for cool mode)
 pwiz="chambm/pwiz-skyline-i-agree-to-the-vendor-licenses"
 dk=(docker --context "$ctx")
+adk=(docker --context "$actx")
 
-# x86_64 VM needed (Wine won't run under Rosetta)
-if ! colima list 2>/dev/null | awk '$1=="x86"{print $2}' | grep -qi running; then
-    colima start x86 --arch x86_64 --vm-type qemu --cpu 4 --memory 8 --disk 60
-fi
-"${dk[@]}" image inspect unidec-linux >/dev/null 2>&1 || "${dk[@]}" build -t unidec-linux "$here"
-"${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
+vm_running() { colima list 2>/dev/null | awk -v p="$1" '$1==p{print $2}' | grep -qi running; }
+start_qemu() { colima start x86 --arch x86_64 --vm-type qemu --cpu 4 --memory 8 --disk 60; }
+start_rosetta() { colima start rosetta --vm-type vz --vz-rosetta --cpu 4 --memory 8 --disk 60; }
 
-# any vendor raw ProteoWizard reads: Agilent/Bruker .d, Thermo/Waters .raw, SCIEX .wiff/.wiff2
+# which raws still need converting (any vendor ProteoWizard reads)
 shopt -s nullglob
+todo=()
 for raw in "$dir"/*.d "$dir"/*.raw "$dir"/*.wiff "$dir"/*.wiff2; do
     b="$(basename "$raw")"
-    m="$dir/${b%.*}.mzML"
-    [ -f "$m" ] && continue
-    echo ">> converting $b -> mzML"
-    "${dk[@]}" run --rm -e WINEDEBUG=-all -v "$dir":/data "$pwiz" \
-        wine_anyuser msconvert "/data/$b" \
-        --mzML --32 --zlib --filter "peakPicking vendor msLevel=1-" -o /data
+    [ -f "$dir/${b%.*}.mzML" ] || todo+=("$raw")
 done
+
+# conversion: only start the hot QEMU VM if there is actually raw to convert
+if [ ${#todo[@]} -gt 0 ]; then
+    vm_running x86 || start_qemu
+    "${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
+    for raw in "${todo[@]}"; do
+        b="$(basename "$raw")"
+        echo ">> converting $b -> mzML"
+        "${dk[@]}" run --rm -e WINEDEBUG=-all -v "$dir":/data "$pwiz" \
+            wine_anyuser msconvert "/data/$b" \
+            --mzML --32 --zlib --filter "peakPicking vendor msLevel=1-" -o /data
+    done
+fi
+
+# analysis: ensure the chosen VM is up (Rosetta in cool mode, else the QEMU VM)
+if [ "$actx" = "colima-rosetta" ]; then
+    vm_running rosetta || start_rosetta
+else
+    vm_running x86 || start_qemu
+fi
+"${adk[@]}" image inspect unidec-linux >/dev/null 2>&1 || \
+    "${adk[@]}" build --platform linux/amd64 -t unidec-linux "$here"
 
 mz=("$dir"/*.mzML); [ ${#mz[@]} -gt 0 ] || { echo "no mzML in $dir"; exit 1; }
 args=(); for f in "${mz[@]}"; do args+=("/data/$(basename "$f")"); done
-"${dk[@]}" run --rm \
+"${adk[@]}" run --rm --platform linux/amd64 \
     -e BASE_MASS="${BASE_MASS:?set BASE_MASS=<unmodified avg mass in Da>}" \
     -e MOD_MASS="${MOD_MASS:?set MOD_MASS=<Da added per conjugation>}" \
     ${MASS_LB:+-e MASS_LB="$MASS_LB"} ${MASS_UB:+-e MASS_UB="$MASS_UB"} \

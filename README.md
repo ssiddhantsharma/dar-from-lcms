@@ -27,6 +27,18 @@ Synthetic, illustrative data (placeholder masses) — regenerate with `python ex
 The prebuilt UniDec/Wine binaries need a real x86_64 VM (Rosetta breaks Wine); the `dar` script
 starts one automatically. On x86_64 Linux, set `COLIMA_CONTEXT=default` and skip Colima.
 
+### Faster / cooler on Apple Silicon
+
+The raw-to-mzML conversion needs Wine, which only runs under full x86 emulation (QEMU), and that is
+CPU-heavy. The UniDec analysis does not need Wine, so it can run under Rosetta, which is fast and
+cool. Turn that on with:
+
+    ANALYZE_CONTEXT=colima-rosetta BASE_MASS=... MOD_MASS=... ./dar ~/Downloads/run
+
+Conversion still uses the QEMU VM (once per file); everything after runs under Rosetta, and
+re-analysing already-converted mzML never starts QEMU at all. Stop idle VMs with `colima stop x86`
+and `colima stop rosetta`.
+
 ## Use
 
 You must give the two masses that define the chemistry:
