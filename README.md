@@ -1,6 +1,7 @@
 # dar-from-lcms
 
 [![ci](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml/badge.svg)](https://github.com/ssiddhantsharma/dar-from-lcms/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DAR (drug/modifier-to-protein ratio) from intact-mass LC-MS, via UniDec, in one command:
 
@@ -55,8 +56,9 @@ BASE_MASS=14000 MOD_MASS=480 TMIN=8.4 TMAX=8.7 ./dar ~/Downloads/run   # fix the
 Writes into the run dir:
 - `dar_results.json` -- per sample: DAR, elution window, measured unmodified/conjugate masses,
   DAR across integration windows (robustness), and a UV-280 late-feature check.
-- `dar_<sample>.png` -- two panels: UV-280 + MS TIC chromatograms (protein window shaded), and
-  the deconvolved mass spectrum with the unmodified / +1 masses anchored at the expected values.
+- `dar_<sample>.png` (and a vector `.pdf`) -- three panels: UV-280 + MS TIC chromatograms (protein
+  window shaded), the raw charge-state envelope, and the deconvolved mass spectrum with the
+  unmodified / +1 masses anchored at the expected values, DAR bands shaded, and adducts labelled.
 
 The masses are anchored at `BASE_MASS` and `BASE_MASS+MOD_MASS` (not free peak picking), so DAR is
 read at the chemically expected positions. If the unmodified and conjugate species co-elute, UV
@@ -99,6 +101,11 @@ license. If you use this tool in a publication, please cite:
 
 Raw-to-mzML conversion uses [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`).
 This project is an independent wrapper and is not endorsed by or affiliated with the UniDec authors.
+
+## License
+
+This wrapper's own code is MIT-licensed (see [LICENSE](LICENSE)). UniDec and ProteoWizard are used
+under their own licenses (see Credits above); they are not redistributed here.
 
 ## Related work
 
