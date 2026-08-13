@@ -28,6 +28,15 @@ Synthetic, illustrative data (placeholder masses), regenerate with `python examp
 The prebuilt UniDec/Wine binaries need a real x86_64 VM (Rosetta breaks Wine); the `dar` script
 starts one automatically. On x86_64 Linux, set `COLIMA_CONTEXT=default` and skip Colima.
 
+### Prebuilt image (skip the local build)
+
+`dar` pulls a prebuilt analysis image from GHCR, so you don't wait on the ~10-minute build:
+
+    docker pull ghcr.io/ssiddhantsharma/dar-from-lcms:latest
+
+Pin a version with `DAR_IMAGE=ghcr.io/ssiddhantsharma/dar-from-lcms:v1.0 ./dar ...`. If no image is
+available it falls back to building locally from the Dockerfile.
+
 ### Faster / cooler on Apple Silicon
 
 The raw-to-mzML conversion needs Wine, which only runs under full x86 emulation (QEMU), and that is
