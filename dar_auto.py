@@ -128,17 +128,11 @@ def _mpl():
     return _PLT
 
 
-def analyze(path, out):
-    from unidec import engine
-    from unidec.UniDecImporter.ImporterFactory import ImporterFactory
-    cfg = load_config()
-    base, step = cfg["base"], cfg["step"]
-    plt = _mpl()
-
-    name = os.path.splitext(os.path.basename(path))[0]
-    tag = name.replace(" ", "_")
+def _chromatograms_uv_tic(path, cfg, imp=None):
+    """(tic, uv, tmin, tmax) from the mzML. UV/TIC come from the <chromatogram>
+    arrays with stdlib; the elution window is TMIN/TMAX if set, else auto. `imp` is
+    an optional UniDec importer used only to synthesise a TIC when the file has none."""
     ch = chromatograms(path)
-    imp = ImporterFactory.create_importer(path)
 
     def pick(*subs):   # first chromatogram whose id contains any of subs (case-insensitive)
         for s in subs:
@@ -148,13 +142,27 @@ def analyze(path, out):
         return None
     tic = pick("TIC")
     uv = pick("Sig=280", "280", "uv", "absorb")   # DAD/UV if present (any vendor); else None
-    if tic is None:                               # some vendors omit a TIC chromatogram in mzML
+    if tic is None and imp is not None:            # some vendors omit a TIC chromatogram in mzML
         tic = np.asarray(imp.get_tic())
-
     if os.environ.get("TMIN") and os.environ.get("TMAX"):
         tmin, tmax = float(os.environ["TMIN"]), float(os.environ["TMAX"])
-    else:
+    elif tic is not None:
         tmin, tmax = elution_window(tic, cfg["void"])
+    else:
+        tmin, tmax = 0.0, 0.0
+    return tic, uv, tmin, tmax
+
+
+def analyze(path, out):
+    from unidec import engine
+    from unidec.UniDecImporter.ImporterFactory import ImporterFactory
+    cfg = load_config()
+    base, step = cfg["base"], cfg["step"]
+
+    name = os.path.splitext(os.path.basename(path))[0]
+    tag = name.replace(" ", "_")
+    imp = ImporterFactory.create_importer(path)
+    tic, uv, tmin, tmax = _chromatograms_uv_tic(path, cfg, imp)
 
     spec = os.path.join(out, "_avg_%s.txt" % tag)
     np.savetxt(spec, np.asarray(imp.get_avg_scan(time_range=(tmin, tmax))))
@@ -170,9 +178,48 @@ def analyze(path, out):
     if md.ndim != 2 or not len(md):
         raise RuntimeError("empty deconvolution (massdat %s)" % (md.shape,))
     md[:, 1] *= 100.0 / md[:, 1].max()
-
-    dar, table = dar_from_massdat(md, base, step)
     mz = np.asarray(e.data.data2)   # processed m/z envelope (the input to deconvolution)
+    peak_width = float(e.config.mzsig)
+    os.remove(spec)
+    return render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width)
+
+
+def replot(path, out):
+    """Regenerate the figure for `path` from cached UniDec output, with no
+    deconvolution (so no UniDec/Docker needed). Reads the averaged-scan mass
+    distribution and processed m/z envelope a previous analyze() run wrote under
+    _avg_<tag>_unidecfiles/, and the chromatograms straight from the mzML."""
+    cfg = load_config()
+    base, step = cfg["base"], cfg["step"]
+    name = os.path.splitext(os.path.basename(path))[0]
+    tag = name.replace(" ", "_")
+    d = os.path.join(out, "_avg_%s_unidecfiles" % tag)
+    massf = os.path.join(d, "_avg_%s_mass.txt" % tag)
+    mzf = os.path.join(d, "_avg_%s_input.dat" % tag)
+    if not (os.path.exists(massf) and os.path.exists(mzf)):
+        raise SystemExit("no cached deconvolution for %s (looked in %s)" % (name, d))
+    md = np.loadtxt(massf)
+    md[:, 1] *= 100.0 / md[:, 1].max()
+    mz = np.loadtxt(mzf)
+    tic, uv, tmin, tmax = _chromatograms_uv_tic(path, cfg)
+    return render(name, out, md, mz, tic, uv, tmin, tmax, base, step)
+
+
+def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
+    """Build the 3-panel figure and result dict from an already-deconvolved mass
+    distribution. Split out of analyze() so figures can be regenerated from cache
+    (see replot) without re-running the deconvolution."""
+    plt = _mpl()
+    tag = name.replace(" ", "_")
+    dar, table = dar_from_massdat(md, base, step)
+    # two-state area fractions of the (0-drug + 1-drug) population; the +1 fraction
+    # IS the reported DAR, so labelling it on the peak makes the number self-evident.
+    naked_pct, conj_pct = round((1 - dar) * 100, 1), round(dar * 100, 1)
+    # optional labelling for report figures (all default to the plain output)
+    fig_title = os.environ.get("FIG_TITLE")            # bold heading; else the file name
+    fig_subtitle = os.environ.get("FIG_SUBTITLE")      # grey second line under the heading
+    conj_label = os.environ.get("CONJ_LABEL", "+1")    # optional name for the +1 species (the reagent)
+    suffix = os.environ.get("FIG_SUFFIX", "")          # appended to the output filename
 
     def uv_h(arr, a, b):
         if arr is None: return None
@@ -221,9 +268,10 @@ def analyze(path, out):
         axC.axvspan(lo_, hi_, color=band, alpha=0.6, lw=0)
     axC.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
     axC.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
-    for m, lab in [(base, "unmodified"), (base + step, "+1")]:
+    for m, lab in [(base, "unmodified"), (base + step, conj_label)]:
         h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
-        axC.annotate("%s\n%.0f Da" % (lab, m), xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
+        axC.annotate("%s\n%.0f Da" % (lab, m),
+                     xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
                      ha="center", va="bottom", fontsize=9, color="#222222",
                      arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
     for da, lab in [(16, "+16"), (178, "+178")]:
@@ -237,21 +285,36 @@ def analyze(path, out):
     axC.set_xlabel("deconvolved mass (Da)"); axC.set_ylabel("relative abundance (%)")
     axC.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axC.transAxes,
              va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
+    a0, a1 = table[1]["naked_area"], table[1]["conj_area"]   # +-25 Da headline bands
+    # compact left-column block (short lines only) so it can't reach the peak labels
+    axC.text(0.015, 0.90,
+             "a0 = %.0f,  a1 = %.0f\nDAR = a1/(a0+a1)\n±25 Da bands, a.u." % (a0, a1),
+             transform=axC.transAxes, va="top", ha="left", fontsize=7, fontweight="bold",
+             color="#333333", linespacing=1.35)
     axC.spines[["top", "right"]].set_visible(False)
 
     for ax, letter in [(axA, "a"), (axB, "b"), (axC, "c")]:
         ax.text(-0.09, 1.02, letter, transform=ax.transAxes, fontsize=13, fontweight="bold")
-    fig.suptitle(name, x=0.5, y=0.997, fontsize=10, color="#666666")
-    fig.tight_layout(rect=(0, 0, 1, 0.99))
-    figpath = os.path.join(out, "dar_%s.png" % tag)
+    # reserve headroom first, then place the heading into it with fig.text (not
+    # suptitle) so the title and subtitle can't collide with each other or panel a
+    top = 0.95 if (fig_title and fig_subtitle) else 0.965 if fig_title else 0.98
+    fig.tight_layout(rect=(0, 0, 1, top))
+    if fig_title:
+        fig.text(0.5, 0.993, fig_title, ha="center", va="top",
+                 fontsize=12.5, fontweight="bold", color="#222222")
+        if fig_subtitle:
+            fig.text(0.5, 0.966, fig_subtitle, ha="center", va="top",
+                     fontsize=9.5, color="#666666")
+    else:
+        fig.text(0.5, 0.992, name, ha="center", va="top", fontsize=10, color="#666666")
+    figpath = os.path.join(out, "dar_%s%s.png" % (tag, suffix))
     fig.savefig(figpath, dpi=300)
     fig.savefig(figpath[:-4] + ".pdf")   # vector, for reports
     plt.close(fig)
-    os.remove(spec)
 
-    return {"file": os.path.basename(path), "window_min": [round(tmin, 2), round(tmax, 2)],
-            "DAR": dar, "conjugated_pct": round(dar * 100, 1),
-            "peak_width_mz": round(float(e.config.mzsig), 3),
+    return {"file": name, "window_min": [round(tmin, 2), round(tmax, 2)],
+            "DAR": dar, "conjugated_pct": conj_pct, "unmodified_pct": naked_pct,
+            "peak_width_mz": (round(peak_width, 3) if peak_width else None),
             "conj_apex": conj_apex, "naked_apex": naked_apex, "trace": trace,
             "expected": [base, round(base + step, 2)],
             "DAR_by_window": table,
@@ -261,10 +324,11 @@ def analyze(path, out):
 
 if __name__ == "__main__":
     out = os.environ.get("OUTDIR", "/data")
+    fn = replot if os.environ.get("REPLOT") else analyze   # REPLOT=1 reuses cached deconvolution
     res = []
     for p in sys.argv[1:]:
         try:
-            res.append(analyze(p, out))
+            res.append(fn(p, out))
         except Exception as ex:
             res.append({"file": os.path.basename(p), "error": str(ex)})
     json.dump(res, open(os.path.join(out, "dar_results.json"), "w"), indent=2)
