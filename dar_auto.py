@@ -205,6 +205,59 @@ def replot(path, out):
     return render(name, out, md, mz, tic, uv, tmin, tmax, base, step)
 
 
+def _uv_concentration(uv, base, tmax, void=2.0):
+    """Optional UV-280 quantitation of the main protein peak, Beer-Lambert straight off
+    the DAD trace. Env-driven so it stays out of the way unless you ask for it:
+
+        EPS280       molar extinction coeff at 280 nm, M^-1 cm^-1  (from the sequence)
+        FLOW_ML_MIN  LC flow rate, mL/min  (NOT reliably in the mzML -- read the method)
+        INJ_UL       injection volume, uL
+        PATH_CM      flow-cell path length, cm            (default 1.0 = 10 mm)
+        DILUTION     sample dilution before injection      (default 1)
+        MW_DA        molecular weight for the mg/mL step    (default: base mass)
+        DAD_UNIT     'mAU' (default) or 'AU'   (Agilent exports mAU even when the mzML
+                     labels the array 'absorbance unit' -- check a 220 nm channel: if it
+                     tops out in the 100s it is mAU, not AU)
+
+    The peak area alone (always returned) is a RELATIVE amount, needs no inputs. Absolute
+    concentration needs EPS280 + FLOW_ML_MIN + INJ_UL. Method: baseline-subtract the UV
+    trace (5th percentile after the void), integrate the main peak (apex -0.7/+0.9 min);
+    moles through the cell = A[AU*min] * F[L/min] / (eps * path); sample conc =
+    moles / injection_volume * dilution; mg/mL = molar * MW. Assumes one pure, resolved
+    protein peak (co-eluting species share the 280 signal)."""
+    if uv is None or not len(uv):
+        return {}
+    unit = os.environ.get("DAD_UNIT", "mAU")
+    post = uv[uv[:, 0] >= void]
+    if not len(post):
+        return {}
+    bl = float(np.percentile(post[:, 1], 5))
+    v = np.clip(uv[:, 1] - bl, 0.0, None)
+    win = (uv[:, 0] >= void) & (uv[:, 0] <= max(tmax + 2.0, void + 1.0))
+    if not win.any():
+        return {}
+    apex = float(uv[win][np.argmax(v[win]), 0])
+    m = (uv[:, 0] >= apex - 0.7) & (uv[:, 0] <= apex + 0.9)
+    area = float(np.trapezoid(v[m], uv[m, 0]))
+    res = {"uv280_apex_min": round(apex, 2), "uv280_peak_area": round(area, 4),
+           "uv280_area_unit": "%s*min" % unit}
+    eps, flow, inj = (os.environ.get(k) for k in ("EPS280", "FLOW_ML_MIN", "INJ_UL"))
+    if eps and flow and inj:
+        eps, flow, inj = float(eps), float(flow), float(inj)
+        path = float(os.environ.get("PATH_CM", 1.0))
+        dil = float(os.environ.get("DILUTION", 1.0))
+        mw = float(os.environ.get("MW_DA", base))
+        area_au = area / 1000.0 if unit.lower() == "mau" else area   # -> AU*min
+        moles = area_au * (flow / 1000.0) / (eps * path)             # flow L/min -> mol
+        conc_m = moles / (inj * 1e-6) * dil                          # mol/L
+        res.update({"protein_conc_uM": round(conc_m * 1e6, 3),
+                    "protein_conc_mg_ml": round(conc_m * mw, 4),
+                    "conc_inputs": {"eps280": eps, "path_cm": path, "inj_ul": inj,
+                                    "dilution": dil, "flow_ml_min": flow,
+                                    "dad_unit": unit, "mw_da": round(mw, 2)}})
+    return res
+
+
 def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     """Build the 3-panel figure and result dict from an already-deconvolved mass
     distribution. Split out of analyze() so figures can be regenerated from cache
@@ -312,14 +365,24 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     fig.savefig(figpath[:-4] + ".pdf")   # vector, for reports
     plt.close(fig)
 
-    return {"file": name, "window_min": [round(tmin, 2), round(tmax, 2)],
-            "DAR": dar, "conjugated_pct": conj_pct, "unmodified_pct": naked_pct,
-            "peak_width_mz": (round(peak_width, 3) if peak_width else None),
-            "conj_apex": conj_apex, "naked_apex": naked_apex, "trace": trace,
-            "expected": [base, round(base + step, 2)],
-            "DAR_by_window": table,
-            "UV280_main_h": uv_main, "UV280_late_h": uv_late,
-            "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None)}
+    res = {"file": name, "window_min": [round(tmin, 2), round(tmax, 2)],
+           "DAR": dar, "conjugated_pct": conj_pct, "unmodified_pct": naked_pct,
+           "peak_width_mz": (round(peak_width, 3) if peak_width else None),
+           "conj_apex": conj_apex, "naked_apex": naked_apex, "trace": trace,
+           "expected": [base, round(base + step, 2)],
+           "DAR_by_window": table,
+           "UV280_main_h": uv_main, "UV280_late_h": uv_late,
+           "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None)}
+    res.update(_uv_concentration(uv, base, tmax))   # optional UV-280 amount/concentration
+    if "protein_conc_mg_ml" in res:
+        ci = res["conc_inputs"]
+        print("[conc] %s: %.4f mg/mL (%.1f uM) | UV280 peak %.3f %s @ %.2f min | "
+              "eps=%g path=%gcm inj=%guL dil=%g flow=%gmL/min %s"
+              % (name, res["protein_conc_mg_ml"], res["protein_conc_uM"],
+                 res["uv280_peak_area"], res["uv280_area_unit"], res["uv280_apex_min"],
+                 ci["eps280"], ci["path_cm"], ci["inj_ul"], ci["dilution"],
+                 ci["flow_ml_min"], ci["dad_unit"]))
+    return res
 
 
 if __name__ == "__main__":

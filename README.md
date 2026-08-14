@@ -76,6 +76,44 @@ read at the chemically expected positions. If the unmodified and conjugate speci
 cannot separate them -- it confirms identity/purity, not an independent DAR; run an unmodified
 control for the orthogonal check.
 
+## Concentration (optional, UV-280)
+
+If the mzML carries a UV/DAD trace, the tool can also quantify the protein by Beer-Lambert from
+the main UV-280 peak. The peak **area** is always reported (a relative amount, no inputs needed);
+an **absolute** concentration is added when you supply the extinction coefficient, flow rate, and
+injection volume as env vars:
+
+```
+EPS280=20000 FLOW_ML_MIN=0.4 INJ_UL=5 \
+  BASE_MASS=... MOD_MASS=... ./dar ~/Downloads/run
+```
+
+| env var | meaning | default |
+|---|---|---|
+| `EPS280` | molar extinction coeff at 280 nm, M⁻¹cm⁻¹ (from the sequence: 5500·Trp + 1490·Tyr + 125·SS) | (off) |
+| `FLOW_ML_MIN` | LC flow rate, mL/min | (off) |
+| `INJ_UL` | injection volume, µL | (off) |
+| `PATH_CM` | flow-cell path length, cm | `1.0` (10 mm) |
+| `DILUTION` | sample dilution before injection | `1` |
+| `MW_DA` | molecular weight for the mg/mL step | `BASE_MASS` |
+| `DAD_UNIT` | `mAU` or `AU` | `mAU` |
+
+Reported in `dar_results.json`: `uv280_peak_area` (+ unit) and, when the inputs are given,
+`protein_conc_uM` and `protein_conc_mg_ml` with the inputs echoed under `conc_inputs`.
+
+Formula: `moles = A[AU·min] · F[L/min] / (ε · path)`, then `conc = moles / injection · dilution`,
+`mg/mL = molar · MW`.
+
+Two traps worth knowing:
+- **Flow rate is usually *not* in the mzML** (Agilent logs only a placeholder value); read it from
+  the LC method. Concentration scales linearly with it.
+- **`DAD_UNIT` defaults to `mAU`** because Agilent exports milli-AU even when the mzML labels the
+  array `absorbance unit`. Sanity check: if a 220 nm channel tops out in the hundreds it is mAU,
+  not AU (getting this wrong is a 1000× error). Set `DAD_UNIT=AU` only if your detector really is.
+
+Absolute UV-280 quant assumes one pure, baseline-resolved protein peak (co-eluting species share
+the 280 signal) and a linear detector.
+
 ## Tests
 
 The analytical core (mzML parsing, band integration, charge assignment, elution-window pick, DAR

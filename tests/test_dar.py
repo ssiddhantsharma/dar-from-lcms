@@ -111,6 +111,32 @@ def _write_mini_mzml(path, t, i):
     path.write_text(xml)
 
 
+def test_uv_concentration(monkeypatch):
+    # synthetic UV trace: flat 2 mAU baseline + triangular peak (apex 8.5, 8.0-9.0, +100),
+    # so the baseline-subtracted peak area is a known 0.5*base*height = 0.5*1*100 = 50 mAU*min
+    for k in ("EPS280", "FLOW_ML_MIN", "INJ_UL", "DAD_UNIT", "MW_DA", "PATH_CM", "DILUTION"):
+        monkeypatch.delenv(k, raising=False)
+    t = np.arange(2.0, 12.0, 0.01)
+    peak = np.clip(100.0 * (1.0 - np.abs(t - 8.5) / 0.5), 0.0, None)
+    uv = np.column_stack([t, 2.0 + peak])
+
+    rel = da._uv_concentration(uv, base=14000.0, tmax=8.7)     # no env -> relative only
+    assert abs(rel["uv280_peak_area"] - 50.0) < 1.0
+    assert rel["uv280_area_unit"] == "mAU*min"
+    assert rel["uv280_apex_min"] == 8.5
+    assert "protein_conc_mg_ml" not in rel                     # absolute needs EPS280/flow/inj
+
+    for k, v in {"EPS280": "5500", "FLOW_ML_MIN": "0.4", "INJ_UL": "5",
+                 "DAD_UNIT": "mAU", "MW_DA": "14000"}.items():
+        monkeypatch.setenv(k, v)
+    ab = da._uv_concentration(uv, base=14000.0, tmax=8.7)
+    # reproduce the documented formula from the reported area and check the code matches
+    area_au = ab["uv280_peak_area"] / 1000.0                   # mAU -> AU
+    conc_M = area_au * (0.4 / 1000.0) / (5500.0 * 1.0) / (5e-6)
+    assert abs(ab["protein_conc_uM"] - conc_M * 1e6) < 0.5
+    assert abs(ab["protein_conc_mg_ml"] - conc_M * 14000.0) < 0.01
+
+
 def test_chromatograms_decodes_mzml(tmp_path):
     t = [0.0, 1.0, 2.0]
     i = [5.0, 9.0, 3.0]
