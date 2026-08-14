@@ -99,7 +99,9 @@ EPS280=20000 FLOW_ML_MIN=0.4 INJ_UL=5 \
 | `DAD_UNIT` | `mAU` or `AU` | `mAU` |
 
 Reported in `dar_results.json`: `uv280_peak_area` (+ unit) and, when the inputs are given,
-`protein_conc_uM` and `protein_conc_mg_ml` with the inputs echoed under `conc_inputs`.
+`protein_conc_uM` and `protein_conc_mg_ml` with the inputs echoed under `conc_inputs`. When the
+absolute inputs are given, the concentration is also annotated on panel (a) of the figure, next to
+the UV trace it came from, with the assumptions printed inline.
 
 Formula: `moles = A[AU·min] · F[L/min] / (ε · path)`, then `conc = moles / injection · dilution`,
 `mg/mL = molar · MW`.

@@ -279,6 +279,7 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
         m = (arr[:, 0] >= a) & (arr[:, 0] <= b)
         return round(float(arr[m, 1].max()), 3) if m.any() else 0.0
     uv_main, uv_late = uv_h(uv, tmin - .3, tmax + .3), uv_h(uv, 18, 22)
+    conc = _uv_concentration(uv, base, tmax)   # optional UV-280 amount/concentration
 
     # report a measured apex only for a species that is actually present (>=10%);
     # a trace species gets None instead of a peak-picker noise bump near the anchor.
@@ -303,6 +304,14 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     axA.set_xlabel("retention time (min)"); axA.set_ylabel("relative signal (%)")
     axA.legend(loc="upper right", frameon=False, handlelength=1.4)
     axA.spines[["top", "right"]].set_visible(False)
+    if conc.get("protein_conc_mg_ml") is not None:   # UV-280 concentration, shown on its own panel
+        ci = conc["conc_inputs"]
+        axA.text(0.37, 0.96,
+                 "protein ≈ %.3f mg/mL (%.1f µM)\nUV-280: %g mm cell, %g µL inj, "
+                 "%g mL/min, dil %g, %s" % (conc["protein_conc_mg_ml"], conc["protein_conc_uM"],
+                 ci["path_cm"] * 10, ci["inj_ul"], ci["flow_ml_min"], ci["dilution"], ci["dad_unit"]),
+                 transform=axA.transAxes, va="top", ha="left", fontsize=7.5, color=prim,
+                 bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#cfd8e3", lw=0.6, alpha=0.9))
 
     axB.plot(mz[:, 0], mz[:, 1] / mz[:, 1].max() * 100, color=prim, lw=0.8)
     dom = base + step if dar >= 0.5 else base
@@ -373,7 +382,7 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
            "DAR_by_window": table,
            "UV280_main_h": uv_main, "UV280_late_h": uv_late,
            "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None)}
-    res.update(_uv_concentration(uv, base, tmax))   # optional UV-280 amount/concentration
+    res.update(conc)   # optional UV-280 amount/concentration (computed above)
     if "protein_conc_mg_ml" in res:
         ci = res["conc_inputs"]
         print("[conc] %s: %.4f mg/mL (%.1f uM) | UV280 peak %.3f %s @ %.2f min | "
