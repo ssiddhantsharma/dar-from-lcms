@@ -41,8 +41,15 @@ averageCAR, this tool vs paper:
 | mal-DFO 600 mM | 2.76 | 2.49 | +0.27 | 1.36 / 1.41 | 12.95-14.86 |
 | NCS-DFO 600 mM | 2.17 | 1.68 | +0.49 | 1.42 / 1.42 | 12.95-14.86 |
 | TMTHSI-DFO 600 mM | 1.15 | 0.79 | +0.36 | 2.04 / 2.13 | 12.95-14.86 |
+| Ipilimumab-N-suc-DFO 600 mM | 1.41 | 1.93 | -0.52 | 1.90 / 1.45 | 11.0-12.5 |
 
-All seven land within +-0.5 of the published value (mean absolute error ~0.32).
+Seven of the eight land within +-0.5 of the published value (mean absolute error ~0.34). The
+ipilimumab file is a different mAb whose unmodified mass is not published; its base was read from the
+data (CAR0 apex 148,685 Da, confirmed by the +700 Da ladder) after tightening the window to the
+monomer (the earlier-eluting shoulder at 10-11 min is aggregate, which SEC elutes first). It reads
+-0.52, the same low direction as trastuzumab-N-suc-DFO: both N-suc lysine conjugates under-read from
+CAR0 over-assignment (see below), and the paper flags ipilimumab as its least-repeatable sample
+(RSD up to 7%).
 
 What tracks well:
 - **Rank order** is preserved: TMTHSI-DFO is correctly the lowest-loaded (~1 vs ~2-2.8 for the rest).
@@ -69,9 +76,6 @@ Where it does not bit-match, and why (not hidden):
   batch to batch (N-suc-DFO-3 measured 1.41 by SEC-MS, 1.68 radiometric, 1.89 SEC-UV; SI Tables S3,
   S9). The +-0.4 spread here is comparable to that inter-method / inter-batch spread.
 
-Not run: the ipilimumab file (its unmodified mass is not published, so `BASE_MASS` would have to be
-read from the data first).
-
 ## Parameter-error lesson (recorded, not hidden)
 
 An earlier exploratory run reported ~1.86 and looked like a glycoform-blurred continuum with no
@@ -93,8 +97,8 @@ MODE=native DAR_MAX_N=6 SATELLITES=0,162.05,324.11,486.16 \
 ## Takeaway
 
 The Thermo conversion path is validated on real vendor data. On native glycosylated IgG the tool
-reproduces the published CAR across four buffer concentrations and four conjugate chemistries to
-within its acquisition/inter-method spread (mean absolute error ~0.32, rank order and the cysteine
-even-CAR signature preserved). It is a general-purpose approximation of the paper's glycoform-specific
-method, not a bit-exact replacement; its exact regime remains denaturing intact-mass DAR of resolved
-binders.
+reproduces the published CAR across four buffer concentrations, four conjugate chemistries, and two
+antibodies (8 files) to within its acquisition/inter-method spread (mean absolute error ~0.34; seven
+of eight within +-0.5; rank order and the cysteine even-CAR signature preserved). It is a
+general-purpose approximation of the paper's glycoform-specific method, not a bit-exact replacement;
+its exact regime remains denaturing intact-mass DAR of resolved binders.
