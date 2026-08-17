@@ -6,6 +6,7 @@ DAR math. Run with `pytest`.
 """
 import base64
 import importlib.util
+import os
 import pathlib
 import zlib
 
@@ -128,6 +129,48 @@ def test_dar_distribution_matches_paper_equations():
     dar1, _ = da.dar_from_massdat(md, base, step)
     d1 = da.dar_distribution(md, base, step, nmax=1)
     assert abs(d1["average_dar"] - dar1) < 2e-3
+
+
+def test_load_mirror_mass(tmp_path, monkeypatch):
+    monkeypatch.delenv("MIRROR_MASS", raising=False)
+    assert da._load_mirror_mass() is None                   # unset -> None
+    p = tmp_path / "ctrl_mass.txt"
+    np.savetxt(str(p), np.column_stack([np.arange(9000, 9100, 1.0),
+                                        _gauss(np.arange(9000, 9100, 1.0), 9050, 40, 3)]))
+    monkeypatch.setenv("MIRROR_MASS", str(p))
+    m = da._load_mirror_mass()
+    assert m is not None and abs(m[:, 1].max() - 100.0) < 1e-6   # normalised to 100
+    monkeypatch.setenv("MIRROR_MASS", str(tmp_path / "nope.txt"))
+    assert da._load_mirror_mass() is None                   # missing file -> None
+
+
+def test_run_manifest_sets_and_restores_env(tmp_path, monkeypatch):
+    # a fake analysis fn records the per-row env it sees; run_manifest must set each row's
+    # params and restore the prior environment afterwards.
+    for k in ("BASE_MASS", "MOD_MASS", "DAR_MAX_N"):
+        monkeypatch.delenv(k, raising=False)
+    man = tmp_path / "manifest.csv"
+    man.write_text("file,BASE_MASS,MOD_MASS,DAR_MAX_N\n"
+                   "a.mzML,9515.87,526.55,1\n"
+                   "b.mzML,148057,769.7,6\n")
+    seen = []
+
+    def fake(path, out):
+        seen.append((os.path.basename(path), os.environ.get("BASE_MASS"), os.environ.get("DAR_MAX_N")))
+        return {"file": os.path.basename(path)}
+    res = da.run_manifest(str(man), str(tmp_path), fake)
+    assert [r["file"] for r in res] == ["a.mzML", "b.mzML"]
+    assert seen == [("a.mzML", "9515.87", "1"), ("b.mzML", "148057", "6")]
+    assert os.environ.get("BASE_MASS") is None and os.environ.get("DAR_MAX_N") is None  # restored
+
+
+def test_plate_heatmap(tmp_path):
+    res = [{"file": "s1", "dar_state_frac": [0.1, 0.2, 0.7]},
+           {"file": "s2", "dar_state_frac": [0.6, 0.3, 0.1]}]
+    p = da.plate_heatmap(res, str(tmp_path))
+    assert p and os.path.exists(p)                          # heatmap written for >=2 multi-state rows
+    assert da.plate_heatmap(res[:1], str(tmp_path)) is None  # <2 samples -> skip
+    assert da.plate_heatmap([{"file": "x", "DAR": 0.9}], str(tmp_path)) is None  # no distribution -> skip
 
 
 def test_mode_presets(monkeypatch):

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dar-from-lcms"
+version = "1.1.0"
+description = "DAR/CAR from intact-mass LC-MS via UniDec: two-state and multi-state, with UV-280 concentration and QC."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Siddhant Sharma" }]
+keywords = ["mass-spectrometry", "DAR", "CAR", "antibody-drug-conjugate", "immunoconjugate", "UniDec", "intact-mass"]
+
+# The pure-Python analysis + plotting core is importable with just numpy (+ matplotlib for
+# figures). Vendor-raw conversion (ProteoWizard) and deconvolution (UniDec) run in the Docker
+# image via the `dar` wrapper, so they are not pip dependencies here.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.6"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/ssiddhantsharma/dar-from-lcms"
+
+[tool.setuptools]
+py-modules = ["dar_auto"]
+
+[tool.ruff]
+lint.select = ["F"]   # match CI (`ruff check --select F`)

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "title": "dar-from-lcms input manifest",
+  "description": "One row per sample for batch/plate runs (MANIFEST=manifest.csv). Each column maps to the environment variable of the same name; only `file`, BASE_MASS and MOD_MASS are required, the rest fall back to the global defaults. Pattern adapted from SmartPeak's sequence.csv and nf-core's assets/schema_input.json.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "file": {"type": "string", "description": "mzML/.d/.raw filename (relative to OUTDIR) or an absolute path"},
+      "BASE_MASS": {"type": "number", "description": "unmodified average mass, Da"},
+      "MOD_MASS": {"type": "number", "description": "mass added per conjugation, Da"},
+      "MODE": {"type": "string", "enum": ["denaturing", "native"], "description": "deconvolution regime preset"},
+      "DAR_MAX_N": {"type": "integer", "minimum": 1, "description": "highest load state; 1 = two-state DAR"},
+      "SATELLITES": {"type": "string", "description": "comma-separated glycoform/adduct mass offsets, e.g. 0,162.05,324.11"},
+      "MIRROR_MASS": {"type": "string", "description": "path to a control deconvolved *_mass.txt to mirror below"},
+      "EPS280": {"type": "number", "description": "molar extinction coeff at 280 nm, M^-1 cm^-1"},
+      "FLOW_ML_MIN": {"type": "number", "description": "LC flow rate, mL/min"},
+      "INJ_UL": {"type": "number", "description": "injection volume, uL"},
+      "PATH_CM": {"type": "number", "description": "flow-cell path length, cm"},
+      "DILUTION": {"type": "number", "description": "sample dilution before injection"},
+      "MW_DA": {"type": "number", "description": "molecular weight for the mg/mL step"},
+      "DAD_UNIT": {"type": "string", "enum": ["mAU", "AU"], "description": "UV absorbance unit"},
+      "TMIN": {"type": "number", "description": "elution window start, min (else auto)"},
+      "TMAX": {"type": "number", "description": "elution window end, min (else auto)"}
+    },
+    "required": ["file", "BASE_MASS", "MOD_MASS"]
+  }
+}

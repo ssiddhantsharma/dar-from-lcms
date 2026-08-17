@@ -158,6 +158,21 @@ def _satellites():
     return offs or (0.0,)
 
 
+def _load_mirror_mass():
+    """Optional control spectrum to mirror below the sample on the deconvolved-mass panel
+    (env MIRROR_MASS = path to a control's deconvolved *_mass.txt). Returns it normalised to
+    100, or None if unset/missing. The mirror (treated on top, control below) is the standard
+    head-to-tail comparison, following spectrum_utils' mirror() convention (reimplemented)."""
+    p = os.environ.get("MIRROR_MASS")
+    if not p or not os.path.exists(p):
+        return None
+    a = np.loadtxt(p)
+    if a.ndim != 2 or not len(a):
+        return None
+    a[:, 1] *= 100.0 / a[:, 1].max()
+    return a
+
+
 def _dar_uncertainty(md, base, step, nmax, satellites, widths=(15.0, 25.0, 40.0)):
     """Reproducibility estimate for the average DAR: its spread across integration
     half-widths. Returns the population standard deviation over `widths`, or nan if any
@@ -212,6 +227,35 @@ def _mpl():
         })
         _PLT = plt
     return _PLT
+
+
+# Species colour map, z-order, and the per-axis styling / label-formatter helpers below are
+# adapted from the patterns in spectrum_utils (Bittremieux et al., Apache-2.0): a `colors`
+# dict keyed by species with a None fallback, a `_format_ax` axis styler, and a pluggable
+# label formatter. Reimplemented here for DAR/CAR load states (not peptide ion types).
+COLORS = {"unmodified": "#1f4e79", "conjugate": "#1976d2", "adduct": "#9aa0a6",
+          "control": "#b0403a", None: "#212121"}
+
+
+def _format_ax(ax, xlabel, ylabel, italic_x=False):
+    """Consistent axis styling: faint grid drawn behind the data, minor ticks, small tick
+    labels, top/right spines off. Pattern from spectrum_utils (_format_ax), reimplemented."""
+    import matplotlib.ticker as mticker
+    ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
+    ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+    ax.grid(True, "major", color="#9e9e9e", linewidth=0.2)
+    ax.grid(True, "minor", color="#9e9e9e", linewidth=0.15)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="both", which="both", labelsize="small")
+    ax.set_xlabel(xlabel, style="italic" if italic_x else "normal")
+    ax.set_ylabel(ylabel)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def _state_label(n, conj_label="+1"):
+    """Label for load state n on the deconvolved-mass panel. Pluggable formatter in the
+    spirit of spectrum_utils' `annot_fmt` (reimplemented for DAR load states)."""
+    return "unmodified" if n == 0 else (conj_label if n == 1 else "+%d" % n)
 
 
 def _chromatograms_uv_tic(path, cfg, imp=None):
@@ -357,6 +401,7 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     nmax = int(os.environ.get("DAR_MAX_N", "1"))       # >1 -> multi-state DAR/CAR distribution
     sats = _satellites()                               # glycoform/adduct offsets folded per state
     dist = dar_distribution(md, base, step, nmax, satellites=sats) if nmax > 1 else None
+    mirror_md = _load_mirror_mass()                    # optional control spectrum to mirror below
     # mass-accuracy + deconvolution-quality, and an uncertainty (integration-window spread)
     mq = _mass_quality(md, base, step, nmax if nmax > 1 else 1, sats if nmax > 1 else (0.0,))
     if dist is not None:
@@ -398,9 +443,8 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                  color=prim, lw=1.4, label="UV 280 nm")
     axA.axvspan(tmin, tmax, color=shade, alpha=0.7, lw=0)
     axA.set_xlim(0, max(25, tmax + 3)); axA.set_ylim(-2, 108)
-    axA.set_xlabel("retention time (min)"); axA.set_ylabel("relative signal (%)")
     axA.legend(loc="upper right", frameon=False, handlelength=1.4)
-    axA.spines[["top", "right"]].set_visible(False)
+    _format_ax(axA, "retention time (min)", "relative signal (%)")
     if conc.get("protein_conc_mg_ml") is not None:   # UV-280 concentration, shown on its own panel
         ci = conc["conc_inputs"]
         axA.text(0.37, 0.96,
@@ -417,10 +461,9 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                      xytext=(0, 3), textcoords="offset points", ha="center",
                      fontsize=7.5, color="#666666")
     axB.set_xlim(mz[:, 0].min(), mz[:, 0].max()); axB.set_ylim(0, 112)
-    axB.set_xlabel("m/z"); axB.set_ylabel("relative intensity (%)")
     axB.set_title("raw charge-state envelope (input to deconvolution)",
                   loc="left", fontsize=9.5, color="#666666")
-    axB.spines[["top", "right"]].set_visible(False)
+    _format_ax(axB, "m/z", "relative intensity (%)", italic_x=True)
 
     ymax = 120
     bands = ([(base + n * step - 25, base + n * step + 25) for n in range(nmax + 1)]
@@ -430,6 +473,14 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
         axC.axvspan(lo_, hi_, color=band, alpha=0.6, lw=0)
     axC.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
     axC.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
+    if mirror_md is not None:                               # head-to-tail: control mirrored below
+        axC.fill_between(mirror_md[:, 0], -mirror_md[:, 1], color=COLORS["control"], alpha=0.16, lw=0)
+        axC.plot(mirror_md[:, 0], -mirror_md[:, 1], color=COLORS["control"], lw=0.9)
+        axC.axhline(0, color="#666666", lw=0.6)
+        axC.text(0.985, 0.97, "treated", transform=axC.transAxes, ha="right", va="top",
+                 fontsize=8, fontweight="bold", color=prim)
+        axC.text(0.985, 0.03, "control", transform=axC.transAxes, ha="right", va="bottom",
+                 fontsize=8, fontweight="bold", color=COLORS["control"])
     if dist is not None:                                    # multi-state ladder: label +0.. +nmax
         for n in range(nmax + 1):
             m = base + n * step
@@ -438,7 +489,7 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                          ha="center", fontsize=7.5, color="#444444")
         axC.set_xlim(base - 300, base + nmax * step + 300)
     else:
-        for m, lab in [(base, "unmodified"), (base + step, conj_label)]:
+        for m, lab in [(base, _state_label(0)), (base + step, _state_label(1, conj_label))]:
             h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
             axC.annotate("%s\n%.0f Da" % (lab, m),
                          xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
@@ -452,15 +503,20 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                     axC.annotate(lab, xy=(am, h), xytext=(0, 3), textcoords="offset points",
                                  ha="center", fontsize=7, color="#999999")
         axC.set_xlim(base - 400, base + step + 500)
-    axC.set_ylim(0, ymax)
-    axC.set_xlabel("deconvolved mass (Da)"); axC.set_ylabel("relative abundance (%)")
+    axC.set_ylim(-ymax if mirror_md is not None else 0, ymax)
     pm = (" ± %.2f" % dar_sd) if dar_sd == dar_sd else ""   # append uncertainty unless nan
+    # mass-accuracy + capture as a small trust line (spectrum_utils mass_errors idea, scaled
+    # to our single dominant state)
+    mqs = "mass err %s ppm; captured %.0f%%" % (
+        ("%+.0f" % mq["mass_error_ppm"]) if mq["mass_error_ppm"] is not None else "n/a",
+        100 * mq["captured_fraction"])
     if dist is not None:
         axC.text(0.015, 0.96, "average DAR = %.2f%s" % (dist["average_dar"], pm),
                  transform=axC.transAxes, va="top", ha="left", fontsize=11,
                  fontweight="bold", color=prim)
         axC.text(0.015, 0.90,
-                 "dispersity %.2f;  states 0-%d\nsum(n*An)/sum(An); ±25 Da bands, a.u." % (dist["dispersity"], nmax),
+                 "dispersity %.2f;  states 0-%d\nsum(n*An)/sum(An); ±25 Da bands, a.u.\n%s"
+                 % (dist["dispersity"], nmax, mqs),
                  transform=axC.transAxes, va="top", ha="left", fontsize=7,
                  fontweight="bold", color="#333333", linespacing=1.35)
     else:
@@ -468,10 +524,10 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                  va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
         a0, a1 = table[1]["naked_area"], table[1]["conj_area"]   # +-25 Da headline bands
         axC.text(0.015, 0.90,      # compact left-column block, short lines, clear of peak labels
-                 "a0 = %.0f,  a1 = %.0f\nDAR = a1/(a0+a1)\n±25 Da bands, a.u." % (a0, a1),
+                 "a0 = %.0f,  a1 = %.0f\nDAR = a1/(a0+a1)\n±25 Da bands, a.u.\n%s" % (a0, a1, mqs),
                  transform=axC.transAxes, va="top", ha="left", fontsize=7, fontweight="bold",
                  color="#333333", linespacing=1.35)
-    axC.spines[["top", "right"]].set_visible(False)
+    _format_ax(axC, "deconvolved mass (Da)", "relative abundance (%)")
 
     for ax, letter in [(axA, "a"), (axB, "b"), (axC, "c")]:
         ax.text(-0.09, 1.02, letter, transform=ax.transAxes, fontsize=13, fontweight="bold")
@@ -524,19 +580,85 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     return res
 
 
+# per-sample columns a manifest row may set (each maps to the env var of the same name)
+_MANIFEST_ENV = ("BASE_MASS", "MOD_MASS", "MODE", "DAR_MAX_N", "SATELLITES", "MIRROR_MASS",
+                 "EPS280", "FLOW_ML_MIN", "INJ_UL", "PATH_CM", "DILUTION", "MW_DA", "DAD_UNIT",
+                 "TMIN", "TMAX", "Z_LO", "Z_HI", "MZ_LO", "MZ_HI", "MASS_LB", "MASS_UB")
+
+
+def run_manifest(path, out, fn):
+    """Batch driver from a per-sample manifest CSV: one row per sample, each setting its own
+    chemistry/params via columns named like the env vars in _MANIFEST_ENV (plus `file`). A
+    plate of different conjugates thus runs in one command. Input-manifest pattern from
+    SmartPeak's sequence.csv + nf-core's schema_input.json (reimplemented); a JSON schema for
+    the columns lives in assets/manifest_schema.json."""
+    import csv
+    res = []
+    with open(path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    for row in rows:
+        f = row.get("file") or row.get("File")
+        if not f:
+            continue
+        saved = {k: os.environ.get(k) for k in _MANIFEST_ENV}   # set row's params, restore after
+        for k in _MANIFEST_ENV:
+            v = row.get(k, row.get(k.lower()))
+            if v not in (None, ""):
+                os.environ[k] = str(v)
+        try:
+            res.append(fn(f if os.path.isabs(f) else os.path.join(out, f), out))
+        except Exception as ex:  # noqa: BLE001 - keep the batch going
+            res.append({"file": os.path.basename(f), "error": str(ex)})
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    return res
+
+
+def plate_heatmap(res, out):
+    """Batch-summary heatmap: samples x load-state (CAR/DAR) fractions. Only for multi-state
+    runs (needs dar_state_frac) with >=2 samples. Heatmap idea from SmartPeak (reimplemented)."""
+    rows = [r for r in res if r.get("dar_state_frac")]
+    if len(rows) < 2:
+        return None
+    plt = _mpl()
+    nmax = max(len(r["dar_state_frac"]) for r in rows)
+    mat = np.array([r["dar_state_frac"] + [0.0] * (nmax - len(r["dar_state_frac"])) for r in rows])
+    fig, ax = plt.subplots(figsize=(max(5.0, nmax * 0.8), max(2.5, len(rows) * 0.5)))
+    im = ax.imshow(mat, aspect="auto", cmap="Blues", vmin=0, vmax=1)
+    ax.set_xticks(range(nmax)); ax.set_xticklabels(["+%d" % n for n in range(nmax)])
+    ax.set_yticks(range(len(rows))); ax.set_yticklabels([r["file"] for r in rows], fontsize=7)
+    ax.set_xlabel("load state")
+    ax.set_title("CAR/DAR distribution across samples", loc="left", fontsize=9.5, color="#666666")
+    for i in range(len(rows)):
+        for j in range(nmax):
+            if mat[i, j] > 0.02:
+                ax.text(j, i, "%.0f%%" % (100 * mat[i, j]), ha="center", va="center",
+                        fontsize=6, color="white" if mat[i, j] > 0.5 else "#222222")
+    fig.colorbar(im, ax=ax, label="fraction", fraction=0.03)
+    fig.tight_layout()
+    p = os.path.join(out, "dar_plate_heatmap.png")
+    fig.savefig(p, dpi=200)
+    plt.close(fig)
+    return p
+
+
 if __name__ == "__main__":
     out = os.environ.get("OUTDIR", "/data")
     fn = replot if os.environ.get("REPLOT") else analyze   # REPLOT=1 reuses cached deconvolution
-    res = []
-    for p in sys.argv[1:]:
-        try:
-            res.append(fn(p, out))
-        except Exception as ex:
-            res.append({"file": os.path.basename(p), "error": str(ex)})
+    manifest = os.environ.get("MANIFEST")                  # per-sample CSV (else CLI file args)
+    if manifest:
+        res = run_manifest(manifest, out, fn)
+    else:
+        res = []
+        for p in sys.argv[1:]:
+            try:
+                res.append(fn(p, out))
+            except Exception as ex:  # noqa: BLE001
+                res.append({"file": os.path.basename(p), "error": str(ex)})
     json.dump(res, open(os.path.join(out, "dar_results.json"), "w"), indent=2)
     print(json.dumps(res, indent=2))
 
-    # tidy one-row-per-sample summary for plate/batch QC
+    # tidy one-row-per-sample summary for plate/batch QC, plus a distribution heatmap
     import csv
     cols = ["file", "DAR", "dar_sd", "average_dar", "average_dar_sd", "dispersity",
             "mass_error_ppm", "captured_fraction", "protein_conc_mg_ml", "window_min", "error"]
@@ -545,3 +667,6 @@ if __name__ == "__main__":
         w.writeheader()
         for r in res:
             w.writerow({k: r.get(k) for k in cols})
+    hp = plate_heatmap(res, out)
+    if hp:
+        print("wrote", hp)

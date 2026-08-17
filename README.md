@@ -169,6 +169,19 @@ Every run also reports two trust checks in `dar_results.json`:
 Running over a folder also writes **`dar_summary.csv`**: one tidy row per sample (DAR, uncertainty,
 average DAR/dispersity, mass error, captured fraction, concentration) for plate/batch QC.
 
+**Manifest (per-sample chemistry).** When each sample needs its own base/mod mass or mode, point
+`MANIFEST` at a CSV (one row per file, columns map to the env vars; see
+[`examples/manifest_example.csv`](examples/manifest_example.csv) and
+[`assets/manifest_schema.json`](assets/manifest_schema.json)). A multi-state batch of two or more
+samples also writes **`dar_plate_heatmap.png`** (samples x load-state fractions).
+
+**Control comparison (mirror).** Set `MIRROR_MASS` to a control run's `_mass.txt` to overlay it
+head-to-tail below the treated sample on the mass panel, so a shifted apex is obvious by eye.
+
+![mirror plot](examples/mirror_demo.png)
+
+Full field-by-field output spec: [`docs/output.md`](docs/output.md).
+
 ## Tests
 
 The analytical core (mzML parsing, band integration, charge assignment, elution-window pick, DAR
