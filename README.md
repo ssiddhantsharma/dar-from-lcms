@@ -160,11 +160,15 @@ offsets below `step` so a state does not bleed into the next.
 
 ## Quality metrics and batch output
 
-Every run also reports two trust checks in `dar_results.json`:
+Every run also reports three trust checks in `dar_results.json`:
 - **`mass_error_ppm`**: observed vs theoretical mass of the most abundant state (is the anchor right?).
 - **`captured_fraction`**: the share of deconvolved signal that lands in the anchored bands; a low
   value means much signal sits outside the model (bad anchors, adducts, or a noisy deconvolution) and
   the DAR should be treated with caution.
+- **`charge_support`**: how many charge states independently back each DAR species. A species held up
+  by many charge states is real; one held up by only one or two is likely a harmonic or a
+  deconvolution artifact. (Idea from FLASHDeconv, adapted to charge-resolved data; see
+  [`CITATIONS.md`](CITATIONS.md).)
 
 Running over a folder also writes **`dar_summary.csv`**: one tidy row per sample (DAR, uncertainty,
 average DAR/dispersity, mass error, captured fraction, concentration) for plate/batch QC.
@@ -179,6 +183,13 @@ samples also writes **`dar_plate_heatmap.png`** (samples x load-state fractions)
 head-to-tail below the treated sample on the mass panel, so a shifted apex is obvious by eye.
 
 ![mirror plot](examples/mirror_demo.png)
+
+**Speed: caching and parallel runs.** The deconvolution depends only on the m/z window, charge
+range, mass bounds and elution window; the DAR anchoring and the whole figure are cheap arithmetic
+on top. So a re-run after changing `MOD_MASS`, `SATELLITES`, the mirror or any figure setting reuses
+the cached deconvolution and re-plots instantly, with no UniDec run. `REPLOT=1` forces replot,
+`NO_CACHE=1` forces a fresh run. For a folder that shares one config, `JOBS=N` processes N samples
+in parallel.
 
 Full field-by-field output spec: [`docs/output.md`](docs/output.md).
 

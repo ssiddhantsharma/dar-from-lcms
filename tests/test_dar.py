@@ -6,6 +6,7 @@ DAR math. Run with `pytest`.
 """
 import base64
 import importlib.util
+import json
 import os
 import pathlib
 import zlib
@@ -268,3 +269,68 @@ def test_chromatograms_decodes_mzml(tmp_path):
     arr = ch["TIC"]
     assert arr.shape == (3, 2)
     assert np.allclose(arr[:, 0], t) and np.allclose(arr[:, 1], i)
+
+
+_DECON_UNSET = ("MASS_LB", "MASS_UB", "MODE", "MZ_LO", "MZ_HI", "Z_LO", "Z_HI",
+                "MASSBINS", "TMIN", "TMAX", "SATELLITES", "REPLOT", "NO_CACHE")
+
+
+def test_decon_key_ignores_dar_params_but_tracks_deconvolution(monkeypatch):
+    for k in _DECON_UNSET:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("BASE_MASS", "10000"); monkeypatch.setenv("MOD_MASS", "500")
+    k0 = da._decon_key(da.load_config())
+    monkeypatch.setenv("MOD_MASS", "700")          # conjugate mass is post-processing only
+    monkeypatch.setenv("SATELLITES", "0,162.05")   # glycoform offsets are post-processing only
+    assert da._decon_key(da.load_config()) == k0   # cache stays valid
+    monkeypatch.setenv("Z_LO", "5")                # charge range governs the deconvolution
+    assert da._decon_key(da.load_config()) != k0   # cache now invalid
+
+
+def test_process_resumes_from_cache_and_falls_back(tmp_path, monkeypatch):
+    for k in _DECON_UNSET:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("BASE_MASS", "10000"); monkeypatch.setenv("MOD_MASS", "500")
+    calls = []
+    monkeypatch.setattr(da, "analyze", lambda p, o: calls.append("analyze") or {"file": "s"})
+    monkeypatch.setattr(da, "replot",
+                        lambda p, o, peak_width=None: calls.append("replot") or {"file": "s"})
+    d, massf, keyf = da._cache_paths(str(tmp_path), "s")
+    src = str(tmp_path / "s.mzML")
+    da.process(src, str(tmp_path))                 # no cache -> analyze
+    assert calls == ["analyze"]
+    os.makedirs(d, exist_ok=True)
+    pathlib.Path(massf).write_text("10000 100\n")
+    json.dump({"key": da._decon_key(da.load_config()), "peak_width": 0.5}, open(keyf, "w"))
+    da.process(src, str(tmp_path))                 # matching cache -> replot
+    assert calls == ["analyze", "replot"]
+    monkeypatch.setenv("Z_LO", "5")                # deconvolution param changed -> re-run
+    da.process(src, str(tmp_path))
+    assert calls == ["analyze", "replot", "analyze"]
+    monkeypatch.delenv("Z_LO", raising=False)
+    monkeypatch.setenv("NO_CACHE", "1")            # forced fresh even with a matching cache
+    da.process(src, str(tmp_path))
+    assert calls[-1] == "analyze"
+
+
+def test_charge_support_counts_charge_states():
+    mass = 10000.0
+    mz = np.arange(600, 2100, 0.5)
+    inten = np.zeros_like(mz)
+    for z in (6, 7, 8, 9):
+        inten += _gauss(mz, (mass + z * 1.00728) / z, 100.0, s=0.7)
+    arr = np.column_stack([mz, inten])
+    assert da._charge_support(arr, mass, 3, 20) == 4       # exactly the 4 charge states present
+    assert da._charge_support(arr, mass + 137.0, 3, 20) < 4  # a wrong mass sheds support
+    assert da._charge_support(None, mass, 3, 20) == 0
+
+
+def test_worker_catches_errors(monkeypatch):
+    monkeypatch.setattr(da, "process", lambda p, o: {"file": "ok"})
+    assert da._worker(("x.mzML", "/tmp"))["file"] == "ok"
+
+    def boom(p, o):
+        raise RuntimeError("bad")
+    monkeypatch.setattr(da, "process", boom)
+    r = da._worker(("bad.mzML", "/tmp"))
+    assert r["error"] == "bad" and r["file"] == "bad.mzML"

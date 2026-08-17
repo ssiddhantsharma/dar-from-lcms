@@ -87,6 +87,34 @@ def charge_peaks(mz, mass, nmax=6, frac=0.15):
     return [(x[k], y[k], int(round(mass / (x[k] - 1.00728)))) for k in keep]
 
 
+def _charge_support(mz, mass, zlo, zhi, thr=0.05, tol=1.0):
+    """How many charge states independently back a deconvolved mass. For each z in [zlo,zhi]
+    the species would appear at m/z = (mass + z*proton)/z; count how many of those predicted
+    positions carry real signal in the processed m/z envelope. A mass supported by many charge
+    states is a genuine species; one supported by only one or two is likely a harmonic or a
+    deconvolution artifact, so this is a stronger 'is the peak real' check than area alone.
+
+    Idea from FLASHDeconv's multi-charge agreement scoring (Jeong et al. 2020), adapted to
+    charge-resolved (not isotope-resolved) intact data: we test charge-state presence, not the
+    isotope-envelope cosine, which our resolution does not support."""
+    if mz is None or not len(mz) or mass <= 0:
+        return 0
+    x, y = mz[:, 0], mz[:, 1]
+    ymax = float(y.max())
+    if ymax <= 0:
+        return 0
+    proton = 1.007276
+    n = 0
+    for z in range(int(zlo), int(zhi) + 1):
+        if z <= 0:
+            continue
+        target = (mass + z * proton) / z
+        m = (x >= target - tol) & (x <= target + tol)
+        if m.any() and float(y[m].max()) >= thr * ymax:
+            n += 1
+    return n
+
+
 def elution_window(tic, void=2.0):
     # widest span around the biggest TIC peak (after the void) that stays above half-max
     t, v = np.asarray(tic).T
@@ -311,10 +339,13 @@ def analyze(path, out):
     mz = np.asarray(e.data.data2)   # processed m/z envelope (the input to deconvolution)
     peak_width = float(e.config.mzsig)
     os.remove(spec)
+    d, _, keyf = _cache_paths(out, tag)   # record the deconvolution key so process() can resume
+    if os.path.isdir(d):
+        json.dump({"key": _decon_key(cfg), "peak_width": peak_width}, open(keyf, "w"))
     return render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width)
 
 
-def replot(path, out):
+def replot(path, out, peak_width=None):
     """Regenerate the figure for `path` from cached UniDec output, with no
     deconvolution (so no UniDec/Docker needed). Reads the averaged-scan mass
     distribution and processed m/z envelope a previous analyze() run wrote under
@@ -332,7 +363,44 @@ def replot(path, out):
     md[:, 1] *= 100.0 / md[:, 1].max()
     mz = np.loadtxt(mzf)
     tic, uv, tmin, tmax = _chromatograms_uv_tic(path, cfg)
-    return render(name, out, md, mz, tic, uv, tmin, tmax, base, step)
+    return render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width)
+
+
+def _decon_key(cfg):
+    """The parameters that actually govern the UniDec deconvolution. Everything DAR-specific
+    (MOD_MASS, SATELLITES, the mirror, band integration, the whole figure) is cheap arithmetic
+    on the resulting massdat, so a change to any of those does NOT invalidate the cache; a
+    change to these does. BASE_MASS is folded in via the mass bounds (mlo/mhi track it)."""
+    return {"zlo": cfg["zlo"], "zhi": cfg["zhi"], "mlo": cfg["mlo"], "mhi": cfg["mhi"],
+            "massbins": cfg["massbins"], "mzlo": cfg["mzlo"], "mzhi": cfg["mzhi"],
+            "tmin": os.environ.get("TMIN"), "tmax": os.environ.get("TMAX")}
+
+
+def _cache_paths(out, tag):
+    d = os.path.join(out, "_avg_%s_unidecfiles" % tag)
+    return d, os.path.join(d, "_avg_%s_mass.txt" % tag), os.path.join(d, "_darcache.json")
+
+
+def process(path, out):
+    """Auto-resume dispatcher: reuse a cached deconvolution when its governing params are
+    unchanged (the fast path -- re-anchoring, glycoform offsets and figure tweaks then cost
+    nothing), and only fall back to a fresh UniDec run when the cache is missing or its
+    deconvolution key differs. REPLOT=1 forces replot; NO_CACHE=1 forces a fresh run."""
+    if os.environ.get("REPLOT"):
+        return replot(path, out)
+    if os.environ.get("NO_CACHE"):
+        return analyze(path, out)
+    cfg = load_config()
+    tag = os.path.splitext(os.path.basename(path))[0].replace(" ", "_")
+    _, massf, keyf = _cache_paths(out, tag)
+    if os.path.exists(massf) and os.path.exists(keyf):
+        try:
+            cached = json.load(open(keyf))
+            if cached.get("key") == _decon_key(cfg):
+                return replot(path, out, peak_width=cached.get("peak_width"))
+        except (ValueError, OSError):
+            pass
+    return analyze(path, out)
 
 
 def _uv_concentration(uv, base, tmax, void=2.0):
@@ -404,6 +472,18 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     mirror_md = _load_mirror_mass()                    # optional control spectrum to mirror below
     # mass-accuracy + deconvolution-quality, and an uncertainty (integration-window spread)
     mq = _mass_quality(md, base, step, nmax if nmax > 1 else 1, sats if nmax > 1 else (0.0,))
+    # charge-state support per load state: how many charge states back each species (real vs
+    # artifact); FLASHDeconv multi-charge-agreement idea, adapted to charge-resolved data
+    try:
+        _c = load_config(); _zlo, _zhi = _c["zlo"], _c["zhi"]
+    except SystemExit:                     # render() called directly without env: sane defaults
+        _zlo, _zhi = 3, 20
+    _nstates = nmax if dist is not None else 1
+    _cstol = max(1.0, peak_width or 0.0)
+    charge_support = [_charge_support(mz, base + n * step, _zlo, _zhi, tol=_cstol)
+                      for n in range(_nstates + 1)]
+    dom_idx = int(np.argmax(dist["state_areas"])) if dist is not None else (1 if dar >= 0.5 else 0)
+    charge_support_dom = charge_support[min(dom_idx, len(charge_support) - 1)]
     if dist is not None:
         dar_sd = round(_dar_uncertainty(md, base, step, nmax, sats), 3)
     else:
@@ -507,9 +587,9 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     pm = (" ± %.2f" % dar_sd) if dar_sd == dar_sd else ""   # append uncertainty unless nan
     # mass-accuracy + capture as a small trust line (spectrum_utils mass_errors idea, scaled
     # to our single dominant state)
-    mqs = "mass err %s ppm; captured %.0f%%" % (
+    mqs = "mass err %s ppm; captured %.0f%%; %d charge states" % (
         ("%+.0f" % mq["mass_error_ppm"]) if mq["mass_error_ppm"] is not None else "n/a",
-        100 * mq["captured_fraction"])
+        100 * mq["captured_fraction"], charge_support_dom)
     if dist is not None:
         axC.text(0.015, 0.96, "average DAR = %.2f%s" % (dist["average_dar"], pm),
                  transform=axC.transAxes, va="top", ha="left", fontsize=11,
@@ -557,7 +637,8 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
            "UV280_main_h": uv_main, "UV280_late_h": uv_late,
            "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None),
            "dar_sd": (dar_sd if dar_sd == dar_sd else None),
-           "mass_error_ppm": mq["mass_error_ppm"], "captured_fraction": mq["captured_fraction"]}
+           "mass_error_ppm": mq["mass_error_ppm"], "captured_fraction": mq["captured_fraction"],
+           "charge_support": charge_support, "charge_support_dominant": charge_support_dom}
     res.update(conc)   # optional UV-280 amount/concentration (computed above)
     if dist is not None:   # optional multi-state DAR/CAR distribution
         res.update({"average_dar": dist["average_dar"], "average_dar_sd": res["dar_sd"],
@@ -567,8 +648,9 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
         print("[multi-DAR] %s: average DAR %.3f ± %s, dispersity %.3f | fractions %s | satellites %s"
               % (name, dist["average_dar"], res["dar_sd"], dist["dispersity"],
                  [round(f, 3) for f in dist["state_frac"]], list(sats)))
-    print("[quality] %s: mass error %s ppm, captured %.0f%% of signal in anchored bands"
-          % (name, mq["mass_error_ppm"], 100 * mq["captured_fraction"]))
+    print("[quality] %s: mass error %s ppm, captured %.0f%% of signal in anchored bands, "
+          "%d charge states support the main species"
+          % (name, mq["mass_error_ppm"], 100 * mq["captured_fraction"], charge_support_dom))
     if "protein_conc_mg_ml" in res:
         ci = res["conc_inputs"]
         print("[conc] %s: %.4f mg/mL (%.1f uM) | UV280 peak %.3f %s @ %.2f min | "
@@ -642,26 +724,38 @@ def plate_heatmap(res, out):
     return p
 
 
+def _worker(args):
+    """Module-level so multiprocessing can pickle it; env (the shared folder config) is
+    inherited by each worker, so this is only used for the shared-config folder case."""
+    path, out = args
+    try:
+        return process(path, out)
+    except Exception as ex:  # noqa: BLE001
+        return {"file": os.path.basename(path), "error": str(ex)}
+
+
 if __name__ == "__main__":
     out = os.environ.get("OUTDIR", "/data")
-    fn = replot if os.environ.get("REPLOT") else analyze   # REPLOT=1 reuses cached deconvolution
     manifest = os.environ.get("MANIFEST")                  # per-sample CSV (else CLI file args)
+    jobs = int(os.environ.get("JOBS", "1"))                # >1 -> parallel folder run
     if manifest:
-        res = run_manifest(manifest, out, fn)
+        # per-row env mutation makes the manifest path process-global; keep it serial. process()
+        # still resumes from cache per row (REPLOT=1 forces replot, NO_CACHE=1 forces fresh).
+        res = run_manifest(manifest, out, process)
+    elif jobs > 1 and len(sys.argv) > 2:
+        from multiprocessing import Pool
+        with Pool(jobs) as pool:
+            res = pool.map(_worker, [(p, out) for p in sys.argv[1:]])
     else:
-        res = []
-        for p in sys.argv[1:]:
-            try:
-                res.append(fn(p, out))
-            except Exception as ex:  # noqa: BLE001
-                res.append({"file": os.path.basename(p), "error": str(ex)})
+        res = [_worker((p, out)) for p in sys.argv[1:]]
     json.dump(res, open(os.path.join(out, "dar_results.json"), "w"), indent=2)
     print(json.dumps(res, indent=2))
 
     # tidy one-row-per-sample summary for plate/batch QC, plus a distribution heatmap
     import csv
     cols = ["file", "DAR", "dar_sd", "average_dar", "average_dar_sd", "dispersity",
-            "mass_error_ppm", "captured_fraction", "protein_conc_mg_ml", "window_min", "error"]
+            "mass_error_ppm", "captured_fraction", "charge_support_dominant",
+            "protein_conc_mg_ml", "window_min", "error"]
     with open(os.path.join(out, "dar_summary.csv"), "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
         w.writeheader()

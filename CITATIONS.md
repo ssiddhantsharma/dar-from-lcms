@@ -52,6 +52,24 @@ reimplemented for this tool's data (deconvolved protein mass, DAR load states). 
     (`assets/manifest_schema.json`, their `assets/schema_input.json`), and an output specification
     (`docs/output.md`). No Nextflow/pipeline code is used.
 
+## Related work (methods in this space)
+
+These are the established methods for intact/top-down mass deconvolution and proteoform
+quantification. We do not use their code; one idea is adapted (noted below), and they are the
+honest alternatives to the UniDec deconvolution this tool wraps.
+
+- **FLASHDeconv**: Jeong, K. et al. *FLASHDeconv: Ultrafast, High-Quality Feature Deconvolution
+  for Top-Down Proteomics.* Cell Syst. 2020, 11 (4). doi:10.1016/j.cels.2020.01.003. Its per-mass
+  scoring rewards agreement across multiple charge states; we adapt that idea as the
+  `charge_support` metric (`_charge_support`), counting how many charge states back each DAR
+  species. We test charge-state presence only, not the isotope-envelope cosine (our intact data is
+  charge-resolved, not isotope-resolved), so this is the idea, reimplemented, not the algorithm.
+- **FLASHQuant**: Kim, J. et al. *FLASHQuant: A Fast Algorithm for Proteoform Quantification in
+  Top-Down Proteomics.* Anal. Chem. 2024, 96. doi:10.1021/acs.analchem.4c03117. Quantifies
+  proteoforms from retention-time-resolved mass traces. This tool instead integrates one
+  time-averaged deconvolution over the elution window; RT-resolved quantification is noted as
+  future work, not implemented.
+
 ## This tool
 
 > Sharma, S. dar-from-lcms: an open, reproducible pipeline for DAR/CAR from intact-mass LC-MS.

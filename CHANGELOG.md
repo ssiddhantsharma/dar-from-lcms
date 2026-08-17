@@ -24,6 +24,15 @@ All notable changes to this project are documented here. Format based on
   chemistry) plus a `dar_summary.csv` output and a `dar_plate_heatmap.png` distribution figure.
 - Figure styling refresh (consistent axis styling, species colour map, mass-error line), and
   reproducible example figures (`make_demo.py`, `make_multidar_demo.py`, `make_mirror_demo.py`).
+- **Resume / cache-reuse**: `process()` auto-reuses a cached deconvolution when the parameters that
+  govern it are unchanged (re-anchoring, glycoform offsets and figure tweaks then cost no UniDec
+  run), and only re-deconvolves when the cache is missing or its key differs. `REPLOT=1` forces
+  replot, `NO_CACHE=1` forces a fresh run.
+- **Batch parallelism**: `JOBS>1` runs a shared-config folder over a process pool; the manifest
+  path stays serial because it mutates process-global env per row.
+- **Charge-state support** (`charge_support`, `charge_support_dominant`): how many charge states
+  independently back each DAR species, a real-vs-artifact check (FLASHDeconv idea, adapted to
+  charge-resolved data; see `CITATIONS.md`).
 - `CITATIONS.md`, `assets/manifest_schema.json`, `docs/output.md`, `validation/` scaffold,
   `pyproject.toml` (pip-installable analysis core), expanded unit tests.
 

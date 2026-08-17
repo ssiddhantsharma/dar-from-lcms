@@ -15,6 +15,8 @@ A JSON array, one object per input file. Fields:
 | `dar_sd` | float or null | uncertainty: spread of DAR across +-15/25/40 Da windows |
 | `mass_error_ppm` | float or null | observed vs theoretical mass of the dominant state |
 | `captured_fraction` | float | fraction of deconvolved signal inside the anchored bands (low = caution) |
+| `charge_support` | list[int] | per load state (index = load number), how many charge states independently back that mass |
+| `charge_support_dominant` | int | `charge_support` for the most abundant state (real vs harmonic/artifact check) |
 | `DAR_by_window` | list | DAR and band areas at half-widths 15/25/40/60 Da (robustness) |
 | `conj_apex` / `naked_apex` | float or null | measured apex mass of a species present at >=10% |
 | `expected` | [float, float] | anchors: `BASE_MASS`, `BASE_MASS+MOD_MASS` |
@@ -45,7 +47,18 @@ Error rows are `{"file": ..., "error": ...}`.
 ## `dar_summary.csv`
 
 One tidy row per sample for plate/batch QC: `file, DAR, dar_sd, average_dar, average_dar_sd,
-dispersity, mass_error_ppm, captured_fraction, protein_conc_mg_ml, window_min, error`.
+dispersity, mass_error_ppm, captured_fraction, charge_support_dominant, protein_conc_mg_ml,
+window_min, error`.
+
+## Caching and parallelism
+
+The expensive step (UniDec deconvolution) depends only on the m/z window, charge range, mass
+bounds, mass-bin size and elution window. `process()` writes a small `_darcache.json` next to the
+cached mass distribution and reuses it on the next run whenever those are unchanged, so
+re-anchoring (`MOD_MASS`), glycoform offsets (`SATELLITES`), the mirror and any figure change
+re-plot instantly with no deconvolution. `REPLOT=1` forces replot; `NO_CACHE=1` forces a fresh
+run. For a shared-config folder, `JOBS=N` runs N samples in parallel (the manifest path stays
+serial).
 
 ## Figures
 
