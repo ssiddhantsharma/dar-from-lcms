@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses date-based notes.
 
-## Unreleased
+## v1.1.0 - 2026-08-17
 
 ### Added
 - **Multi-state DAR/CAR** (`DAR_MAX_N`): full load-state distribution, average DAR, and the
@@ -37,13 +37,18 @@ All notable changes to this project are documented here. Format based on
   (Hulstaert et al. 2020), which runs cross-platform, so a Thermo-only run stays on the cool VM and
   never starts the QEMU/Wine VM. Other vendors still convert with ProteoWizard. `CONVERTER=pwiz`
   forces the old path.
-- `CITATIONS.md`, `assets/manifest_schema.json`, `docs/output.md`, `validation/` scaffold,
-  `pyproject.toml` (pip-installable analysis core), expanded unit tests.
+- **Public validation** against van der Zon et al. 2026 (Zenodo 10.5281/zenodo.17637726): 8 files,
+  two antibodies, four buffer concentrations, four chelator chemistries; averageCAR mean absolute
+  error ~0.34 vs the paper, rank order and the cysteine even-CAR signature preserved (`validation/`).
+- `CITATIONS.md` (incl. Neelamegham et al. 2019 glycan nomenclature), `assets/manifest_schema.json`,
+  `docs/output.md`, `validation/`, `pyproject.toml` (pip-installable analysis core), expanded tests.
 
 ### Notes
 - Backward compatible: the default (no new env vars) is the original two-state DAR.
 - `SATELLITES` band integration is exact for resolved states; for native glycosylated IgG it is an
   approximation of the reference method's glycoform-specific integration (see `docs/output.md`).
+- On Apple Silicon the `dar` wrapper converts Thermo `.raw` under the Rosetta VM with the mono
+  interpreter (`MONO_ENV_OPTIONS=--interp`), since mono's JIT crashes under Rosetta translation.
 
 ## v1.0
 
