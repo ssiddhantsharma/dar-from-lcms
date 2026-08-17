@@ -130,6 +130,65 @@ def test_dar_distribution_matches_paper_equations():
     assert abs(d1["average_dar"] - dar1) < 2e-3
 
 
+def test_mode_presets(monkeypatch):
+    for k in ("MODE", "MZ_LO", "MZ_HI", "Z_LO", "Z_HI", "MASS_LB", "MASS_UB", "MASSBINS"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("BASE_MASS", "148000"); monkeypatch.setenv("MOD_MASS", "770")
+    d = da.load_config()                                   # denaturing default
+    assert (d["mzlo"], d["mzhi"], d["zlo"], d["zhi"]) == (600.0, 2200.0, 3, 20)
+    assert not d["native"]
+    monkeypatch.setenv("MODE", "native")                   # native preset
+    n = da.load_config()
+    assert n["native"] and n["mzlo"] == 2000.0 and n["mzhi"] == 8000.0 and n["zhi"] == 45
+    monkeypatch.setenv("MZ_HI", "7000")                    # per-var override beats the preset
+    assert da.load_config()["mzhi"] == 7000.0
+
+
+def test_satellite_folding_recovers_average_when_glycoforms_differ():
+    # CAR0 sits mostly on its base glycoform; CAR1 mostly on its +162/+324 glycoforms.
+    # A single band (base glycoform only) under-counts CAR1 -> wrong low DAR; folding the
+    # glycoform satellites recovers the true 0.5.
+    base, step = 148000.0, 770.0
+    m = np.arange(base - 300, base + step + 600, 1.0)
+
+    def glyc(center, amps):
+        return sum(_gauss(m, center + off, a, 3) for off, a in zip((0.0, 162.0, 324.0), amps))
+    md = np.column_stack([m, glyc(base, [80, 15, 5]) + glyc(base + step, [10, 30, 60])])
+    single = da.dar_distribution(md, base, step, 1)                          # base glycoform only
+    glyco = da.dar_distribution(md, base, step, 1, satellites=(0.0, 162.0, 324.0))
+    assert abs(single["average_dar"] - 10 / 90) < 0.03      # under-counts the +1 state
+    assert abs(glyco["average_dar"] - 100 / 200) < 0.03     # glycoform-aware recovers 0.5
+    assert glyco["state_areas"][1] > single["state_areas"][1]
+
+
+def test_dar_uncertainty_small_for_clean_peaks():
+    base, step = 10000.0, 500.0
+    m = np.arange(base - 300, base + step + 300, 1.0)
+    md = np.column_stack([m, _gauss(m, base, 30, 3) + _gauss(m, base + step, 90, 3)])
+    sd = da._dar_uncertainty(md, base, step, 1, (0.0,))
+    assert 0.0 <= sd < 0.05                                 # resolved peaks -> tiny window spread
+
+
+def test_mass_error_ppm_and_captured_fraction():
+    base, step = 10000.0, 500.0
+    m = np.arange(base - 300, base + step + 300, 1.0)
+    # dominant = conjugate, its apex shifted +5 Da from the anchor (~476 ppm at 10500)
+    md = np.column_stack([m, _gauss(m, base, 10, 3) + _gauss(m, base + step + 5, 100, 3)])
+    q = da._mass_quality(md, base, step, 1, (0.0,))
+    assert q["mass_error_ppm"] is not None and 350 < q["mass_error_ppm"] < 600
+    assert q["captured_fraction"] > 0.9                     # all signal is in the two bands
+
+
+def test_captured_fraction_flags_unmodeled_signal():
+    base, step = 10000.0, 500.0
+    m = np.arange(base - 1000, base + step + 2500, 1.0)
+    # two anchored peaks plus a large broad hump far outside the bands (e.g. deconvolution baseline)
+    md = np.column_stack([m, _gauss(m, base, 30, 3) + _gauss(m, base + step, 60, 3)
+                          + _gauss(m, base + step + 1500, 200, 150)])
+    q = da._mass_quality(md, base, step, 1, (0.0,))
+    assert q["captured_fraction"] < 0.5                     # most signal is the unmodelled hump
+
+
 def test_uv_concentration(monkeypatch):
     # synthetic UV trace: flat 2 mAU baseline + triangular peak (apex 8.5, 8.0-9.0, +100),
     # so the baseline-subtracted peak area is a known 0.5*base*height = 0.5*1*100 = 50 mAU*min

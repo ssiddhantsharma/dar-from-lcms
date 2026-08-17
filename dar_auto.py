@@ -12,10 +12,18 @@ def load_config():
         raise SystemExit("set BASE_MASS (unmodified average mass, Da) and "
                          "MOD_MASS (mass added per conjugation, Da)")
     base, step = float(b), float(s)
-    return dict(base=base, step=step,
+    # regime presets: 'denaturing' = RP intact of small proteins (low charge, m/z 600-2200);
+    # 'native' = native SEC-MS of large folded proteins (high charge, m/z ~2000-8000). Every
+    # preset value is individually overridable by its own env var.
+    native = os.environ.get("MODE", "denaturing").lower() == "native"
+    mzlo0, mzhi0, zlo0, zhi0, mub0 = ((2000.0, 8000.0, 10, 45, base + 6000.0) if native
+                                      else (600.0, 2200.0, 3, 20, base + 3000.0))
+    return dict(base=base, step=step, native=native,
                 mlo=float(os.environ.get("MASS_LB", base - 2000)),
-                mhi=float(os.environ.get("MASS_UB", base + 3000)),
-                zlo=int(os.environ.get("Z_LO", 3)), zhi=int(os.environ.get("Z_HI", 20)),
+                mhi=float(os.environ.get("MASS_UB", mub0)),
+                zlo=int(os.environ.get("Z_LO", zlo0)), zhi=int(os.environ.get("Z_HI", zhi0)),
+                mzlo=float(os.environ.get("MZ_LO", mzlo0)), mzhi=float(os.environ.get("MZ_HI", mzhi0)),
+                massbins=float(os.environ.get("MASSBINS", 1.0)),
                 void=float(os.environ.get("VOID_MIN", 2.0)))
 
 
@@ -102,33 +110,82 @@ def dar_from_massdat(md, base, step, widths=(15, 25, 40, 60)):
     return table[1]["DAR"], table   # headline = +/-25 Da band
 
 
-def dar_distribution(md, base, step, nmax, w=25.0):
-    """Multi-state DAR/CAR from a deconvolved mass spectrum. Integrate a +-w Da band at
-    base + n*step for n = 0..nmax, then report per-state area and fraction, the average
-    load, and the dispersity index following van der Zon et al., Anal. Chim. Acta 1395
-    (2026), Eqs 1-3:
+def _state_area(md, base, step, n, satellites, w):
+    """Integrated area of load state n = sum over its satellite offsets of a +-w Da band
+    at base + n*step + offset. Satellites are the glycoforms and/or adducts that belong
+    to the same load state (see dar_distribution)."""
+    c = base + n * step
+    return sum(area(md, c + g - w, c + g + w) for g in satellites)
+
+
+def dar_distribution(md, base, step, nmax, w=25.0, satellites=(0.0,)):
+    """Multi-state DAR/CAR from a deconvolved mass spectrum. For load state n, sum a +-w Da
+    band at base + n*step + g over the satellite offsets g -- the glycoforms and/or adducts
+    that belong to the same load state (e.g. IgG glycoforms 0/+162/+324, +16 oxidation,
+    +178 gluconoylation). `satellites=(0.0,)` (the default) is a single band, i.e. the
+    resolved-species case; passing a glycoform list makes the count glycoform-aware, which
+    is the honest fix for native glycosylated IgG whose load states otherwise overlap.
+
+    Reports per-state area and fraction, the average load, and the dispersity index
+    (van der Zon et al., Anal. Chim. Acta 1395 (2026), Eqs 1-3):
 
         average = sum_n (n * A_n) / sum_n (A_n)                       (Eq 1)
         Mw      = sum_n (n^2 * A_n) / sum_n (n * A_n)                 (Eq 2)
         dispersity = Mw / average                                    (Eq 3)
 
-    The two-state DAR (dar_from_massdat) is exactly the nmax=1 case of `average`. Assumes
-    the n-load species are resolved at base + n*step; for glycosylated intact IgG the load
-    states overlap the glycoform envelope, so this band integration is approximate versus
-    the paper's glycoform-specific (G0F/G1F) calculation -- report it as such."""
-    areas = [area(md, base + n * step - w, base + n * step + w) for n in range(nmax + 1)]
+    The two-state DAR (dar_from_massdat) is exactly the nmax=1, single-band case. Keep the
+    satellite offsets below `step` so one state's envelope does not bleed into the next."""
+    areas = [_state_area(md, base, step, n, satellites, w) for n in range(nmax + 1)]
     tot = sum(areas)
     if tot <= 0:
         nan = float("nan")
         return {"average_dar": nan, "dispersity": nan,
                 "state_areas": [round(a, 1) for a in areas],
                 "state_frac": [nan] * (nmax + 1)}
-    avg = sum(n * a for n, a in enumerate(areas)) / tot
-    den = sum(n * a for n, a in enumerate(areas))
-    disp = (sum(n * n * a for n, a in enumerate(areas)) / den) / avg if (den and avg) else float("nan")
+    num = sum(n * a for n, a in enumerate(areas))            # sum n*A_n (numerator of Eq 1)
+    avg = num / tot
+    disp = (sum(n * n * a for n, a in enumerate(areas)) / num) / avg if (num and avg) else float("nan")
     return {"average_dar": round(avg, 3), "dispersity": round(disp, 3),
             "state_areas": [round(a, 1) for a in areas],
             "state_frac": [round(a / tot, 4) for a in areas]}
+
+
+def _satellites():
+    """Satellite mass offsets (Da) folded into each load state, from the SATELLITES env
+    (comma-separated), e.g. IgG glycoforms '0,162.05,324.11' or with adducts
+    '0,16,162.05,178'. Default (0.0,) = a single band per state."""
+    offs = tuple(float(x) for x in os.environ.get("SATELLITES", "").split(",") if x.strip())
+    return offs or (0.0,)
+
+
+def _dar_uncertainty(md, base, step, nmax, satellites, widths=(15.0, 25.0, 40.0)):
+    """Reproducibility estimate for the average DAR: its spread across integration
+    half-widths. Returns the population standard deviation over `widths`, or nan if any
+    width gives nan. This is a lower bound on uncertainty (window choice only); true
+    uncertainty also needs replicate injections."""
+    vals = [dar_distribution(md, base, step, nmax, w, satellites)["average_dar"] for w in widths]
+    if any(v != v for v in vals):
+        return float("nan")
+    mean = sum(vals) / len(vals)
+    return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+
+
+def _mass_quality(md, base, step, nmax, satellites, w=25.0):
+    """Two trust checks on the deconvolution: (1) mass_error_ppm, observed-vs-theoretical
+    mass of the most abundant load state (its base glycoform); (2) captured_fraction, the
+    share of total deconvolved signal that falls in the anchored state+satellite bands --
+    a low value means much signal sits outside the model (bad anchors, adducts, or a noisy
+    deconvolution) and the DAR should be treated with caution."""
+    areas = [_state_area(md, base, step, n, satellites, w) for n in range(nmax + 1)]
+    if sum(areas) <= 0 or not len(md):
+        return {"mass_error_ppm": None, "captured_fraction": 0.0}
+    n_dom = int(max(range(nmax + 1), key=lambda n: areas[n]))
+    theo = base + n_dom * step
+    obs, _ = apex(md, theo, w=w)
+    ppm = round((obs - theo) / theo * 1e6, 1) if obs is not None else None
+    total = area(md, md[0, 0], md[-1, 0])
+    return {"mass_error_ppm": ppm,
+            "captured_fraction": round(sum(areas) / total, 3) if total > 0 else 0.0}
 
 
 _PLT = None
@@ -198,8 +255,8 @@ def analyze(path, out):
     e = engine.UniDec(); e.open_file(spec)
     e.config.startz, e.config.endz = cfg["zlo"], cfg["zhi"]
     e.config.masslb, e.config.massub = cfg["mlo"], cfg["mhi"]
-    e.config.massbins = 1.0
-    e.config.minmz, e.config.maxmz = 600.0, 2200.0
+    e.config.massbins = cfg["massbins"]
+    e.config.minmz, e.config.maxmz = cfg["mzlo"], cfg["mzhi"]
     e.process_data()
     e.get_auto_peak_width()   # match peak width to the data's resolution (vs UniDec's fixed default)
     e.run_unidec(silent=True)
@@ -298,7 +355,16 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     # IS the reported DAR, so labelling it on the peak makes the number self-evident.
     naked_pct, conj_pct = round((1 - dar) * 100, 1), round(dar * 100, 1)
     nmax = int(os.environ.get("DAR_MAX_N", "1"))       # >1 -> multi-state DAR/CAR distribution
-    dist = dar_distribution(md, base, step, nmax) if nmax > 1 else None
+    sats = _satellites()                               # glycoform/adduct offsets folded per state
+    dist = dar_distribution(md, base, step, nmax, satellites=sats) if nmax > 1 else None
+    # mass-accuracy + deconvolution-quality, and an uncertainty (integration-window spread)
+    mq = _mass_quality(md, base, step, nmax if nmax > 1 else 1, sats if nmax > 1 else (0.0,))
+    if dist is not None:
+        dar_sd = round(_dar_uncertainty(md, base, step, nmax, sats), 3)
+    else:
+        _dv = [r["DAR"] for r in table]
+        _m = sum(_dv) / len(_dv)
+        dar_sd = round((sum((x - _m) ** 2 for x in _dv) / len(_dv)) ** 0.5, 3)
     # optional labelling for report figures (all default to the plain output)
     fig_title = os.environ.get("FIG_TITLE")            # bold heading; else the file name
     fig_subtitle = os.environ.get("FIG_SUBTITLE")      # grey second line under the heading
@@ -388,8 +454,9 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
         axC.set_xlim(base - 400, base + step + 500)
     axC.set_ylim(0, ymax)
     axC.set_xlabel("deconvolved mass (Da)"); axC.set_ylabel("relative abundance (%)")
+    pm = (" ± %.2f" % dar_sd) if dar_sd == dar_sd else ""   # append uncertainty unless nan
     if dist is not None:
-        axC.text(0.015, 0.96, "average DAR = %.2f" % dist["average_dar"],
+        axC.text(0.015, 0.96, "average DAR = %.2f%s" % (dist["average_dar"], pm),
                  transform=axC.transAxes, va="top", ha="left", fontsize=11,
                  fontweight="bold", color=prim)
         axC.text(0.015, 0.90,
@@ -397,7 +464,7 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
                  transform=axC.transAxes, va="top", ha="left", fontsize=7,
                  fontweight="bold", color="#333333", linespacing=1.35)
     else:
-        axC.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axC.transAxes,
+        axC.text(0.015, 0.96, "DAR = %.2f%s" % (dar, pm), transform=axC.transAxes,
                  va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
         a0, a1 = table[1]["naked_area"], table[1]["conj_area"]   # +-25 Da headline bands
         axC.text(0.015, 0.90,      # compact left-column block, short lines, clear of peak labels
@@ -432,15 +499,20 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
            "expected": [base, round(base + step, 2)],
            "DAR_by_window": table,
            "UV280_main_h": uv_main, "UV280_late_h": uv_late,
-           "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None)}
+           "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None),
+           "dar_sd": (dar_sd if dar_sd == dar_sd else None),
+           "mass_error_ppm": mq["mass_error_ppm"], "captured_fraction": mq["captured_fraction"]}
     res.update(conc)   # optional UV-280 amount/concentration (computed above)
     if dist is not None:   # optional multi-state DAR/CAR distribution
-        res.update({"average_dar": dist["average_dar"], "dispersity": dist["dispersity"],
-                    "dar_states": nmax, "dar_state_frac": dist["state_frac"],
+        res.update({"average_dar": dist["average_dar"], "average_dar_sd": res["dar_sd"],
+                    "dispersity": dist["dispersity"], "dar_states": nmax,
+                    "satellites": list(sats), "dar_state_frac": dist["state_frac"],
                     "dar_state_areas": dist["state_areas"]})
-        print("[multi-DAR] %s: average DAR %.3f, dispersity %.3f | state fractions %s"
-              % (name, dist["average_dar"], dist["dispersity"],
-                 [round(f, 3) for f in dist["state_frac"]]))
+        print("[multi-DAR] %s: average DAR %.3f ± %s, dispersity %.3f | fractions %s | satellites %s"
+              % (name, dist["average_dar"], res["dar_sd"], dist["dispersity"],
+                 [round(f, 3) for f in dist["state_frac"]], list(sats)))
+    print("[quality] %s: mass error %s ppm, captured %.0f%% of signal in anchored bands"
+          % (name, mq["mass_error_ppm"], 100 * mq["captured_fraction"]))
     if "protein_conc_mg_ml" in res:
         ci = res["conc_inputs"]
         print("[conc] %s: %.4f mg/mL (%.1f uM) | UV280 peak %.3f %s @ %.2f min | "
@@ -463,3 +535,13 @@ if __name__ == "__main__":
             res.append({"file": os.path.basename(p), "error": str(ex)})
     json.dump(res, open(os.path.join(out, "dar_results.json"), "w"), indent=2)
     print(json.dumps(res, indent=2))
+
+    # tidy one-row-per-sample summary for plate/batch QC
+    import csv
+    cols = ["file", "DAR", "dar_sd", "average_dar", "average_dar_sd", "dispersity",
+            "mass_error_ppm", "captured_fraction", "protein_conc_mg_ml", "window_min", "error"]
+    with open(os.path.join(out, "dar_summary.csv"), "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for r in res:
+            w.writerow({k: r.get(k) for k in cols})

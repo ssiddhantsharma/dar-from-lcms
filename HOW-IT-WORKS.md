@@ -109,10 +109,17 @@ dispersity  = Mw / average DAR      (1.0 = every molecule carries the same load;
 ```
 
 (van der Zon et al., Anal. Chim. Acta 1395, 2026, Eqs 1-3; see Credits in the README). The two-state
-DAR is exactly the `N = 1` case. This band integration is exact when the load states are resolved
-(as for small, deglycosylated binders). For native, glycosylated intact IgG the states are broad,
-overlapping glycoform envelopes, so a fixed band is approximate, the reference method resolves this
-by integrating specific glycoforms (G0F/G1F).
+DAR is exactly the `N = 1` case. A single band is exact when the load states are resolved (small,
+deglycosylated binders). For native, glycosylated intact IgG each state is a broad glycoform envelope
+and states overlap, so a fixed band under-counts, `SATELLITES` (glycoform/adduct mass offsets, e.g.
+`0,162.05,324.11`) folds each state's whole envelope into its count, the same idea as the reference
+method's G0F/G1F integration. `MODE=native` sets the deconvolution presets (m/z 2000-8000, higher
+charge) for that regime. The reported average DAR also carries a `±` uncertainty (its spread across
+±15/25/40 Da windows, a lower bound on reproducibility).
+
+Two trust checks accompany every result: `mass_error_ppm` (observed vs theoretical mass of the
+dominant state, so you know the anchor is right) and `captured_fraction` (the share of deconvolved
+signal inside the anchored bands, a low value flags a noisy deconvolution or wrong anchors).
 
 ---
 

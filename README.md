@@ -139,11 +139,35 @@ Mw          = Σ (n² · Aₙ) / Σ (n · Aₙ)
 dispersity  = Mw / average DAR      (1.0 = monodisperse; higher = broader load distribution)
 ```
 
-The two-state DAR is exactly the `DAR_MAX_N=1` case of the average. This band integration is exact
-when the load states are resolved (as for small, deglycosylated binders). For native, glycosylated
-intact IgG the states are broad glycoform envelopes that overlap, so a fixed band is approximate;
-the reference method resolves this by integrating specific glycoforms (G0F/G1F). See the citation
-in Credits.
+The two-state DAR is exactly the `DAR_MAX_N=1` case of the average. The reported average DAR also
+carries a **± uncertainty** (the spread across ±15/25/40 Da integration windows, a lower bound on
+reproducibility).
+
+**Glycoform-aware (native IgG).** A single band is exact when the load states are resolved (small,
+deglycosylated binders). For native, glycosylated intact IgG each load state is a broad glycoform
+envelope, so a fixed band under-counts and states overlap. Set `SATELLITES` to the glycoform (and/or
+adduct) mass offsets to fold into each state, so a state's intensity is collected across its whole
+envelope, the same idea as the reference method's G0F/G1F integration:
+
+```
+MODE=native SATELLITES=0,162.05,324.11 DAR_MAX_N=6 BASE_MASS=148000 MOD_MASS=770 ./dar run
+```
+
+`MODE=native` switches the deconvolution presets to the native regime (m/z 2000-8000, higher charge
+range); every preset is overridable (`MZ_LO`, `MZ_HI`, `Z_LO`, `Z_HI`, `MASSBINS`, `MASS_UB`).
+`SATELLITES` also folds adducts (e.g. add `16` for oxidation, `178` for gluconoylation); keep the
+offsets below `step` so a state does not bleed into the next.
+
+## Quality metrics and batch output
+
+Every run also reports two trust checks in `dar_results.json`:
+- **`mass_error_ppm`**: observed vs theoretical mass of the most abundant state (is the anchor right?).
+- **`captured_fraction`**: the share of deconvolved signal that lands in the anchored bands; a low
+  value means much signal sits outside the model (bad anchors, adducts, or a noisy deconvolution) and
+  the DAR should be treated with caution.
+
+Running over a folder also writes **`dar_summary.csv`**: one tidy row per sample (DAR, uncertainty,
+average DAR/dispersity, mass error, captured fraction, concentration) for plate/batch QC.
 
 ## Tests
 
