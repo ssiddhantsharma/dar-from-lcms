@@ -166,6 +166,7 @@ def test_run_manifest_sets_and_restores_env(tmp_path, monkeypatch):
 
 
 def test_plate_heatmap(tmp_path):
+    pytest.importorskip("matplotlib")   # figure test; CI installs only numpy + pytest
     res = [{"file": "s1", "dar_state_frac": [0.1, 0.2, 0.7]},
            {"file": "s2", "dar_state_frac": [0.6, 0.3, 0.1]}]
     p = da.plate_heatmap(res, str(tmp_path))
