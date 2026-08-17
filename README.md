@@ -116,6 +116,35 @@ Two traps worth knowing:
 Absolute UV-280 quant assumes one pure, baseline-resolved protein peak (co-eluting species share
 the 280 signal) and a linear detector.
 
+## Multi-state DAR/CAR (optional)
+
+The default is the two-state (0/1) DAR above. For conjugates that carry more than one payload or
+chelator, set `DAR_MAX_N` to the highest load state and the tool reports the full distribution:
+
+```
+DAR_MAX_N=6 BASE_MASS=... MOD_MASS=... ./dar ~/Downloads/run
+```
+
+![multi-state DAR/CAR example](examples/multidar_demo.png)
+
+*Synthetic, illustrative data (placeholder masses); regenerate with `python examples/make_multidar_demo.py`.*
+
+It integrates a ±25 Da band at `base + n·step` for n = 0…`DAR_MAX_N`, and reports, in
+`dar_results.json` and on the figure, the per-state fractions, the **average DAR** and the
+**dispersity index**, following van der Zon et al. (2026):
+
+```
+average DAR = Σ (n · Aₙ) / Σ (Aₙ)
+Mw          = Σ (n² · Aₙ) / Σ (n · Aₙ)
+dispersity  = Mw / average DAR      (1.0 = monodisperse; higher = broader load distribution)
+```
+
+The two-state DAR is exactly the `DAR_MAX_N=1` case of the average. This band integration is exact
+when the load states are resolved (as for small, deglycosylated binders). For native, glycosylated
+intact IgG the states are broad glycoform envelopes that overlap, so a fixed band is approximate;
+the reference method resolves this by integrating specific glycoforms (G0F/G1F). See the citation
+in Credits.
+
 ## Tests
 
 The analytical core (mzML parsing, band integration, charge assignment, elution-window pick, DAR
@@ -149,6 +178,13 @@ license. If you use this tool in a publication, please cite:
 
 > Marty, M. T. et al. *Bayesian Deconvolution of Mass and Ion Mobility Spectra.*
 > Anal. Chem. 2015, 87 (8), 4370-4376. doi:[10.1021/acs.analchem.5b00140](https://doi.org/10.1021/acs.analchem.5b00140)
+
+The multi-state average DAR and dispersity-index definitions (Eqs 1-3) follow:
+
+> van der Zon, A. A. M.; Weijers, B.; Vugts, D. J.; Gargano, A. F. G. *Microscale native size
+> exclusion chromatography high resolution mass spectrometry for the determination of the
+> chelator-to-antibody ratio of immunoconjugates.* Anal. Chim. Acta 2026, 1395, 345214.
+> doi:[10.1016/j.aca.2026.345214](https://doi.org/10.1016/j.aca.2026.345214) (open access, CC BY)
 
 Raw-to-mzML conversion uses [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`).
 This project is an independent wrapper and is not endorsed by or affiliated with the UniDec authors.

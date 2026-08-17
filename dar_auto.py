@@ -102,6 +102,35 @@ def dar_from_massdat(md, base, step, widths=(15, 25, 40, 60)):
     return table[1]["DAR"], table   # headline = +/-25 Da band
 
 
+def dar_distribution(md, base, step, nmax, w=25.0):
+    """Multi-state DAR/CAR from a deconvolved mass spectrum. Integrate a +-w Da band at
+    base + n*step for n = 0..nmax, then report per-state area and fraction, the average
+    load, and the dispersity index following van der Zon et al., Anal. Chim. Acta 1395
+    (2026), Eqs 1-3:
+
+        average = sum_n (n * A_n) / sum_n (A_n)                       (Eq 1)
+        Mw      = sum_n (n^2 * A_n) / sum_n (n * A_n)                 (Eq 2)
+        dispersity = Mw / average                                    (Eq 3)
+
+    The two-state DAR (dar_from_massdat) is exactly the nmax=1 case of `average`. Assumes
+    the n-load species are resolved at base + n*step; for glycosylated intact IgG the load
+    states overlap the glycoform envelope, so this band integration is approximate versus
+    the paper's glycoform-specific (G0F/G1F) calculation -- report it as such."""
+    areas = [area(md, base + n * step - w, base + n * step + w) for n in range(nmax + 1)]
+    tot = sum(areas)
+    if tot <= 0:
+        nan = float("nan")
+        return {"average_dar": nan, "dispersity": nan,
+                "state_areas": [round(a, 1) for a in areas],
+                "state_frac": [nan] * (nmax + 1)}
+    avg = sum(n * a for n, a in enumerate(areas)) / tot
+    den = sum(n * a for n, a in enumerate(areas))
+    disp = (sum(n * n * a for n, a in enumerate(areas)) / den) / avg if (den and avg) else float("nan")
+    return {"average_dar": round(avg, 3), "dispersity": round(disp, 3),
+            "state_areas": [round(a, 1) for a in areas],
+            "state_frac": [round(a / tot, 4) for a in areas]}
+
+
 _PLT = None
 
 
@@ -238,8 +267,8 @@ def _uv_concentration(uv, base, tmax, void=2.0):
         return {}
     apex = float(uv[win][np.argmax(v[win]), 0])
     m = (uv[:, 0] >= apex - 0.7) & (uv[:, 0] <= apex + 0.9)
-    area = float(np.trapezoid(v[m], uv[m, 0]))
-    res = {"uv280_apex_min": round(apex, 2), "uv280_peak_area": round(area, 4),
+    pk_area = float(np.trapezoid(v[m], uv[m, 0]))   # not the module-level area(); local peak area
+    res = {"uv280_apex_min": round(apex, 2), "uv280_peak_area": round(pk_area, 4),
            "uv280_area_unit": "%s*min" % unit}
     eps, flow, inj = (os.environ.get(k) for k in ("EPS280", "FLOW_ML_MIN", "INJ_UL"))
     if eps and flow and inj:
@@ -247,7 +276,7 @@ def _uv_concentration(uv, base, tmax, void=2.0):
         path = float(os.environ.get("PATH_CM", 1.0))
         dil = float(os.environ.get("DILUTION", 1.0))
         mw = float(os.environ.get("MW_DA", base))
-        area_au = area / 1000.0 if unit.lower() == "mau" else area   # -> AU*min
+        area_au = pk_area / 1000.0 if unit.lower() == "mau" else pk_area   # -> AU*min
         moles = area_au * (flow / 1000.0) / (eps * path)             # flow L/min -> mol
         conc_m = moles / (inj * 1e-6) * dil                          # mol/L
         res.update({"protein_conc_uM": round(conc_m * 1e6, 3),
@@ -268,6 +297,8 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     # two-state area fractions of the (0-drug + 1-drug) population; the +1 fraction
     # IS the reported DAR, so labelling it on the peak makes the number self-evident.
     naked_pct, conj_pct = round((1 - dar) * 100, 1), round(dar * 100, 1)
+    nmax = int(os.environ.get("DAR_MAX_N", "1"))       # >1 -> multi-state DAR/CAR distribution
+    dist = dar_distribution(md, base, step, nmax) if nmax > 1 else None
     # optional labelling for report figures (all default to the plain output)
     fig_title = os.environ.get("FIG_TITLE")            # bold heading; else the file name
     fig_subtitle = os.environ.get("FIG_SUBTITLE")      # grey second line under the heading
@@ -326,33 +357,53 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     axB.spines[["top", "right"]].set_visible(False)
 
     ymax = 120
-    for lo_, hi_ in [(base - 25, base + 25), (base + step - 25, base + step + 25)]:
+    bands = ([(base + n * step - 25, base + n * step + 25) for n in range(nmax + 1)]
+             if dist is not None else
+             [(base - 25, base + 25), (base + step - 25, base + step + 25)])
+    for lo_, hi_ in bands:
         axC.axvspan(lo_, hi_, color=band, alpha=0.6, lw=0)
     axC.fill_between(md[:, 0], md[:, 1], color=prim, alpha=0.18, lw=0)
     axC.plot(md[:, 0], md[:, 1], color=prim, lw=0.9)
-    for m, lab in [(base, "unmodified"), (base + step, conj_label)]:
-        h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
-        axC.annotate("%s\n%.0f Da" % (lab, m),
-                     xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
-                     ha="center", va="bottom", fontsize=9, color="#222222",
-                     arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
-    for da, lab in [(16, "+16"), (178, "+178")]:
-        am = dom + da
-        if md[0, 0] <= am <= md[-1, 0]:
-            h = float(md[np.argmin(abs(md[:, 0] - am)), 1])
-            if h > 4:
-                axC.annotate(lab, xy=(am, h), xytext=(0, 3), textcoords="offset points",
-                             ha="center", fontsize=7, color="#999999")
-    axC.set_xlim(base - 400, base + step + 500); axC.set_ylim(0, ymax)
+    if dist is not None:                                    # multi-state ladder: label +0.. +nmax
+        for n in range(nmax + 1):
+            m = base + n * step
+            h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
+            axC.annotate("+%d" % n, xy=(m, h), xytext=(0, 4), textcoords="offset points",
+                         ha="center", fontsize=7.5, color="#444444")
+        axC.set_xlim(base - 300, base + nmax * step + 300)
+    else:
+        for m, lab in [(base, "unmodified"), (base + step, conj_label)]:
+            h = float(md[np.argmin(abs(md[:, 0] - m)), 1])
+            axC.annotate("%s\n%.0f Da" % (lab, m),
+                         xy=(m, h), xytext=(m, min(h + 15, ymax - 5)),
+                         ha="center", va="bottom", fontsize=9, color="#222222",
+                         arrowprops=dict(arrowstyle="-", lw=0.7, color="#999999", shrinkA=0, shrinkB=1))
+        for da, lab in [(16, "+16"), (178, "+178")]:
+            am = dom + da
+            if md[0, 0] <= am <= md[-1, 0]:
+                h = float(md[np.argmin(abs(md[:, 0] - am)), 1])
+                if h > 4:
+                    axC.annotate(lab, xy=(am, h), xytext=(0, 3), textcoords="offset points",
+                                 ha="center", fontsize=7, color="#999999")
+        axC.set_xlim(base - 400, base + step + 500)
+    axC.set_ylim(0, ymax)
     axC.set_xlabel("deconvolved mass (Da)"); axC.set_ylabel("relative abundance (%)")
-    axC.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axC.transAxes,
-             va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
-    a0, a1 = table[1]["naked_area"], table[1]["conj_area"]   # +-25 Da headline bands
-    # compact left-column block (short lines only) so it can't reach the peak labels
-    axC.text(0.015, 0.90,
-             "a0 = %.0f,  a1 = %.0f\nDAR = a1/(a0+a1)\n±25 Da bands, a.u." % (a0, a1),
-             transform=axC.transAxes, va="top", ha="left", fontsize=7, fontweight="bold",
-             color="#333333", linespacing=1.35)
+    if dist is not None:
+        axC.text(0.015, 0.96, "average DAR = %.2f" % dist["average_dar"],
+                 transform=axC.transAxes, va="top", ha="left", fontsize=11,
+                 fontweight="bold", color=prim)
+        axC.text(0.015, 0.90,
+                 "dispersity %.2f;  states 0-%d\nsum(n*An)/sum(An); ±25 Da bands, a.u." % (dist["dispersity"], nmax),
+                 transform=axC.transAxes, va="top", ha="left", fontsize=7,
+                 fontweight="bold", color="#333333", linespacing=1.35)
+    else:
+        axC.text(0.015, 0.96, "DAR = %.2f" % dar, transform=axC.transAxes,
+                 va="top", ha="left", fontsize=11, fontweight="bold", color=prim)
+        a0, a1 = table[1]["naked_area"], table[1]["conj_area"]   # +-25 Da headline bands
+        axC.text(0.015, 0.90,      # compact left-column block, short lines, clear of peak labels
+                 "a0 = %.0f,  a1 = %.0f\nDAR = a1/(a0+a1)\n±25 Da bands, a.u." % (a0, a1),
+                 transform=axC.transAxes, va="top", ha="left", fontsize=7, fontweight="bold",
+                 color="#333333", linespacing=1.35)
     axC.spines[["top", "right"]].set_visible(False)
 
     for ax, letter in [(axA, "a"), (axB, "b"), (axC, "c")]:
@@ -383,6 +434,13 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
            "UV280_main_h": uv_main, "UV280_late_h": uv_late,
            "UV_late_over_main": (round(uv_late / uv_main, 2) if uv_main else None)}
     res.update(conc)   # optional UV-280 amount/concentration (computed above)
+    if dist is not None:   # optional multi-state DAR/CAR distribution
+        res.update({"average_dar": dist["average_dar"], "dispersity": dist["dispersity"],
+                    "dar_states": nmax, "dar_state_frac": dist["state_frac"],
+                    "dar_state_areas": dist["state_areas"]})
+        print("[multi-DAR] %s: average DAR %.3f, dispersity %.3f | state fractions %s"
+              % (name, dist["average_dar"], dist["dispersity"],
+                 [round(f, 3) for f in dist["state_frac"]]))
     if "protein_conc_mg_ml" in res:
         ci = res["conc_inputs"]
         print("[conc] %s: %.4f mg/mL (%.1f uM) | UV280 peak %.3f %s @ %.2f min | "

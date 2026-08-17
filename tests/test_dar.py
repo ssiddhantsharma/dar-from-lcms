@@ -111,6 +111,25 @@ def _write_mini_mzml(path, t, i):
     path.write_text(xml)
 
 
+def test_dar_distribution_matches_paper_equations():
+    # van der Zon et al. 2026 worked example (dispersity definition): intensities
+    # 20/60/20 for CAR1/CAR2/CAR3 -> averageDAR 2.0, dispersity 1.1. Validates Eqs 1-3.
+    base, step = 10000.0, 500.0
+    m = np.arange(base - 200, base + 5 * step + 200, 1.0)
+    inten = (_gauss(m, base + 1 * step, 20, 3) + _gauss(m, base + 2 * step, 60, 3)
+             + _gauss(m, base + 3 * step, 20, 3))
+    md = np.column_stack([m, inten])
+    d = da.dar_distribution(md, base, step, nmax=4)
+    assert abs(d["average_dar"] - 2.0) < 0.02
+    assert abs(d["dispersity"] - 1.1) < 0.02
+    assert abs(sum(d["state_frac"]) - 1.0) < 1e-6
+
+    # the two-state DAR is exactly the nmax=1 case of the general average
+    dar1, _ = da.dar_from_massdat(md, base, step)
+    d1 = da.dar_distribution(md, base, step, nmax=1)
+    assert abs(d1["average_dar"] - dar1) < 2e-3
+
+
 def test_uv_concentration(monkeypatch):
     # synthetic UV trace: flat 2 mAU baseline + triangular peak (apex 8.5, 8.0-9.0, +100),
     # so the baseline-subtracted peak area is a known 0.5*base*height = 0.5*1*100 = 50 mAU*min
