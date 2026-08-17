@@ -13,8 +13,10 @@ reagent), the "drug/modifier-to-protein ratio" (DAR) is just **occupancy**: the 
 molecules that carry the modifier. Each molecule is either unmodified (0) or singly modified (1),
 so DAR runs from 0 to 1 and equals the conjugated fraction.
 
-For a multi-site conjugation you would instead read a ladder (0, +1, +2, …) and take the
-intensity-weighted average; this tool is written for the single-site case.
+For a multi-site conjugation you read a **ladder** (0, +1, +2, …) and take the intensity-weighted
+average. The default (`DAR_MAX_N=1`) is the single-site 0/1 case above; set `DAR_MAX_N` to the
+highest load state and the tool reports the whole distribution, the **average DAR = Σ(n·Aₙ)/Σ(Aₙ)**,
+and a **dispersity index** (how broad the load distribution is). See §5.
 
 ---
 
@@ -40,7 +42,7 @@ The split exists for one reason: UniDec and the Agilent file reader (via Wine) o
 **x86_64 Linux**, but a Mac is ARM. A Docker container (through Colima's QEMU VM) *is* that Linux
 box, and the `dar` script drives it from outside.
 
-**`dar`** (bash, on your machine — the orchestrator). On `./dar <folder>`:
+**`dar`** (bash, on your machine, the orchestrator). On `./dar <folder>`:
 
 1. Resolve the folder; select the docker context.
 2. Start the x86_64 VM if it is not already up (Wine does not run under Rosetta translation).
@@ -53,7 +55,7 @@ box, and the `dar` script drives it from outside.
    `MOD_MASS`) as environment variables.
 6. Outputs land back in your folder (it is the mounted `/data`).
 
-**`dar_auto.py`** (Python, inside the container — the analysis). Per file:
+**`dar_auto.py`** (Python, inside the container, the analysis). Per file:
 
 1. Parse the **TIC and UV-280 chromatograms** straight out of the mzML.
 2. Find the **protein elution window**: the largest TIC peak after the void, widened to where it
@@ -72,8 +74,8 @@ box, and the `dar` script drives it from outside.
 Deconvolution alone just hands you a mass spectrum; it cannot know *which* peak is unmodified and
 which is +1. You supply that:
 
-- **`BASE_MASS` (M)** — the unmodified protein's average mass, from its sequence.
-- **`MOD_MASS` (Δ)** — the mass added per conjugation, from the reagent. A thiol-maleimide adds the
+- **`BASE_MASS` (M)**, the unmodified protein's average mass, from its sequence.
+- **`MOD_MASS` (Δ)**, the mass added per conjugation, from the reagent. A thiol-maleimide adds the
   **full reagent mass** (it is a Michael addition, nothing leaves), so Δ is simply the reagent's
   molecular weight.
 
@@ -98,6 +100,20 @@ the ratio is read at the chemically correct masses even when one peak is tiny. T
 DAR at several integration band widths; if the number barely moves across them, it is not an
 artifact of one arbitrary window.
 
+**Multi-site (`DAR_MAX_N > 1`).** Integrate a band at `M + n·Δ` for n = 0…N, then
+
+```
+average DAR = Σ (n · Aₙ) / Σ (Aₙ)
+Mw          = Σ (n² · Aₙ) / Σ (n · Aₙ)
+dispersity  = Mw / average DAR      (1.0 = every molecule carries the same load; higher = broader)
+```
+
+(van der Zon et al., Anal. Chim. Acta 1395, 2026, Eqs 1-3; see Credits in the README). The two-state
+DAR is exactly the `N = 1` case. This band integration is exact when the load states are resolved
+(as for small, deglycosylated binders). For native, glycosylated intact IgG the states are broad,
+overlapping glycoform envelopes, so a fixed band is approximate, the reference method resolves this
+by integrating specific glycoforms (G0F/G1F).
+
 ---
 
 ## 6. Why you run an unmodified control
@@ -108,7 +124,7 @@ With only the treated run, "DAR ≈ 0.9" would rest on three assumptions:
 - that the `+Δ` shift is really the reagent and not a coincidental adduct,
 - that a peak at `M + Δ` is genuine conjugation and not deconvolution noise.
 
-An **unmodified control** — the same protein, run identically, that never saw the reagent — turns
+An **unmodified control**, the same protein, run identically, that never saw the reagent, turns
 each assumption into a measurement:
 
 | The control proves | How |
@@ -124,7 +140,30 @@ result.
 
 ---
 
-## 7. Honest limits
+## 7. UV-280 concentration (optional)
+
+Deconvolution gives *ratios* (DAR); it does not tell you *how much* protein there is, and MS
+intensity is **not** proportional to concentration (ionization efficiency differs per analyte, so
+you cannot read concentration off the mass spectrum without a per-analyte standard). The
+quantitative signal is the **UV-280 absorbance**, which obeys Beer-Lambert (`A = ε·c·l`). When you
+supply the extinction coefficient and flow parameters, the tool reports concentration from the UV
+peak:
+
+- integrate the UV-280 peak over the elution window → area `A` (AU·min);
+- moles through the detector = `A · F / (ε · l)`, `F` = flow rate, `ε` = molar extinction at 280 nm
+  from the sequence (`5500·Trp + 1490·Tyr + 125·disulfide`), `l` = flow-cell path length;
+- sample concentration = moles / injection volume × dilution; `mg/mL = molar × MW`.
+
+Set `EPS280`, `FLOW_ML_MIN`, `INJ_UL` (optionally `PATH_CM`, `DILUTION`, `MW_DA`, `DAD_UNIT`). **No
+physical standard is needed**, the sequence-derived `ε` is the standard. Two traps: the flow rate
+is usually not in the mzML (read it from the LC method), and Agilent exports **mAU** even when the
+file labels the array "absorbance unit" (mis-reading it as AU is a 1000× error, sanity-check a
+220 nm channel: values in the hundreds are mAU). Assumes one pure, resolved peak and a linear
+detector.
+
+---
+
+## 8. Honest limits
 
 - **The exact percentage assumes equal ionization** of the unmodified and modified species. This is
   reasonable for a single small modification but is not proven by the measurement; treat the number
