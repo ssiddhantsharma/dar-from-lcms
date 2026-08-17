@@ -40,15 +40,18 @@ for raw in "$dir"/*.d "$dir"/*.raw "$dir"/*.wiff "$dir"/*.wiff2; do
     fi
 done
 
-# Thermo .raw -> mzML on the analysis (cool) VM, default peak picking to match msconvert below
+# Thermo .raw -> mzML on the analysis (cool) VM, default peak picking to match msconvert below.
+# mono's JIT crashes under Rosetta's x86 translation (verified: core dump in log4net static
+# init), so force the mono interpreter there. The QEMU-x86 path runs real x86 and keeps the JIT.
+monoint=""; [ "$aprofile" = rosetta ] && monoint="--interp"
 if [ ${#thermo[@]} -gt 0 ]; then
     ensure_vm "$aprofile"
     "${adk[@]}" image inspect "$trfp" >/dev/null 2>&1 || "${adk[@]}" pull --platform linux/amd64 "$trfp"
     for raw in "${thermo[@]}"; do
         b="$(basename "$raw")"
         echo ">> converting $b -> mzML (ThermoRawFileParser, no Wine)"
-        "${adk[@]}" run --rm --platform linux/amd64 -v "$dir":/data "$trfp" \
-            ThermoRawFileParser -i "/data/$b" -f 2 -o /data
+        "${adk[@]}" run --rm --platform linux/amd64 ${monoint:+-e MONO_ENV_OPTIONS="$monoint"} \
+            -v "$dir":/data "$trfp" ThermoRawFileParser -i "/data/$b" -f 2 -o /data
     done
 fi
 

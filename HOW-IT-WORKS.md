@@ -38,19 +38,22 @@ So the chain is: charge ladder → true mass → which mass is unmodified, which
 
 ## 3. The two layers
 
-The split exists for one reason: UniDec and the Agilent file reader (via Wine) only run on
-**x86_64 Linux**, but a Mac is ARM. A Docker container (through Colima's QEMU VM) *is* that Linux
-box, and the `dar` script drives it from outside.
+The split exists because UniDec, and ProteoWizard's vendor readers (via Wine), run on **x86_64
+Linux**, not on an ARM Mac. A Docker container (through Colima) is that Linux box, and the `dar`
+script drives it. Thermo `.raw` is the exception: ThermoRawFileParser reads it with no Wine, so a
+Thermo-only run (and every re-analysis) stays on the fast Rosetta VM and never starts the slow
+QEMU VM.
 
 **`dar`** (bash, on your machine, the orchestrator). On `./dar <folder>`:
 
 1. Resolve the folder; select the docker context.
-2. Start the x86_64 VM if it is not already up (Wine does not run under Rosetta translation).
-3. Ensure both images exist: build the analysis image from the Dockerfile if missing, pull the
-   ProteoWizard image if missing.
-4. For each `.d` folder with no matching `.mzML` yet, run the ProteoWizard container to convert
-   `.d → .mzML` (the folder is mounted into the container as `/data`). Existing mzML are skipped,
-   so re-runs do not repeat the conversion.
+2. Bring up a VM: the cool Rosetta VM for Thermo conversion, re-analysis, and the deconvolution;
+   the QEMU x86 VM only when Wine is actually needed (other vendors).
+3. Ensure the images exist: the analysis image (pull, else build from the Dockerfile), plus the
+   converter needed for the inputs present.
+4. Convert each raw with no matching `.mzML` yet: Thermo `.raw` via ThermoRawFileParser (no Wine),
+   other vendors (`.d`/`.wiff`/Waters `.raw` directory) via ProteoWizard under Wine. The folder is
+   mounted as `/data`; existing mzML are skipped, so re-runs do not repeat the conversion.
 5. Run the analysis container once over all the mzML, passing the chemistry (`BASE_MASS`,
    `MOD_MASS`) as environment variables.
 6. Outputs land back in your folder (it is the mounted `/data`).
@@ -109,12 +112,13 @@ dispersity  = Mw / average DAR      (1.0 = every molecule carries the same load;
 ```
 
 (van der Zon et al., Anal. Chim. Acta 1395, 2026, Eqs 1-3; see Credits in the README). The two-state
-DAR is exactly the `N = 1` case. A single band is exact when the load states are resolved (small,
-deglycosylated binders). For native, glycosylated intact IgG each state is a broad glycoform envelope
-and states overlap, so a fixed band under-counts, `SATELLITES` (glycoform/adduct mass offsets, e.g.
-`0,162.05,324.11`) folds each state's whole envelope into its count, the same idea as the reference
-method's G0F/G1F integration. `MODE=native` sets the deconvolution presets (m/z 2000-8000, higher
-charge) for that regime. The reported average DAR also carries a `±` uncertainty (its spread across
+DAR is exactly the `N = 1` case, and it is exact when the load states are baseline-resolved (small,
+deglycosylated binders). `MODE=native` sets deconvolution presets (m/z 2000-8000, higher charge) and
+`SATELLITES` (glycoform/adduct offsets, e.g. `0,162.05,324.11`) folds each state's glycoform envelope
+into its count. On native, glycosylated intact IgG this is an **approximation**, not a match to the
+reference method's glycoform-specific integration: the states blur into a continuum with no resolved
+ladder, so the CAR becomes anchor-sensitive and the `captured_fraction` drops. See `validation/` for a
+worked, honest example. The reported average DAR also carries a `±` uncertainty (its spread across
 ±15/25/40 Da windows, a lower bound on reproducibility).
 
 Two trust checks accompany every result: `mass_error_ppm` (observed vs theoretical mass of the
