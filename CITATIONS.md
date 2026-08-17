@@ -9,6 +9,9 @@ and note below exactly what was borrowed from other software (and what was chang
 > Marty, M.T. et al. Bayesian Deconvolution of Mass and Ion Mobility Spectra. *Anal. Chem.*
 > 2015, 87 (8), 4370-4376. doi:10.1021/acs.analchem.5b00140
 
+The reference CAR method (van der Zon et al. 2026, below) deconvolves with this same UniDec engine,
+so matching its stated parameters is a direct reproduction rather than a different method.
+
 **UniDec Processing Pipeline (UPP)** (biotherapeutic MS analysis):
 > Phung, W. et al. UniDec Processing Pipeline for Rapid Analysis of Biotherapeutic Mass
 > Spectrometry Data. *Anal. Chem.* 2023, 95 (30), 11491-11498. doi:10.1021/acs.analchem.3c02010
@@ -31,6 +34,9 @@ conversion needs no Wine/Windows):
   weight-average, and dispersity definitions; we do **not** reproduce their tuned UniDec parameters.
 - **UV-280 extinction coefficient** uses the Pace convention (5500*Trp + 1490*Tyr + 125*disulfide);
   Pace, C.N. et al. *Protein Sci.* 1995, 4, 2411-2423.
+- **Glycoform nomenclature** (G0F/G1F etc., used in the docs and the `SATELLITES` offsets) follows
+  Neelamegham, S. et al. *Updates to the Symbol Nomenclature for Glycans guidelines.* Glycobiology
+  2019, 29, 620-624. doi:10.1093/glycob/cwz045.
 
 ## Software patterns borrowed (reimplemented, not copied)
 
