@@ -33,6 +33,10 @@ All notable changes to this project are documented here. Format based on
 - **Charge-state support** (`charge_support`, `charge_support_dominant`): how many charge states
   independently back each DAR species, a real-vs-artifact check (FLASHDeconv idea, adapted to
   charge-resolved data; see `CITATIONS.md`).
+- **Thermo .raw without Wine**: the `dar` wrapper converts Thermo `.raw` with ThermoRawFileParser
+  (Hulstaert et al. 2020), which runs cross-platform, so a Thermo-only run stays on the cool VM and
+  never starts the QEMU/Wine VM. Other vendors still convert with ProteoWizard. `CONVERTER=pwiz`
+  forces the old path.
 - `CITATIONS.md`, `assets/manifest_schema.json`, `docs/output.md`, `validation/` scaffold,
   `pyproject.toml` (pip-installable analysis core), expanded unit tests.
 

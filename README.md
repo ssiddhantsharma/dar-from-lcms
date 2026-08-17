@@ -9,7 +9,8 @@ DAR (drug/modifier-to-protein ratio) from intact-mass LC-MS, via UniDec, in one 
 
     BASE_MASS=<unmodified avg mass Da> MOD_MASS=<Da added per conjugation> ./dar /path/to/run_dir
 
-Converts vendor raw (Agilent/Bruker `.d`, Thermo/Waters `.raw`, SCIEX `.wiff`, via ProteoWizard) to
+Converts vendor raw (Thermo `.raw` via ThermoRawFileParser; Agilent/Bruker `.d`, Waters `.raw`,
+SCIEX `.wiff` via ProteoWizard) to
 mzML, deconvolves each spectrum, and writes the unmodified and +1 masses, the conjugated fraction
 and DAR, plus a plot per sample. Written for a single conjugation site (one reactive residue), where
 DAR is occupancy 0-1. The deconvolution/DAR works on any mzML; the UV-280 panel is drawn when the
@@ -41,15 +42,16 @@ available it falls back to building locally from the Dockerfile.
 
 ### Faster / cooler on Apple Silicon
 
-The raw-to-mzML conversion needs Wine, which only runs under full x86 emulation (QEMU), and that is
-CPU-heavy. The UniDec analysis does not need Wine, so it can run under Rosetta, which is fast and
-cool. Turn that on with:
+Thermo `.raw` convert with ThermoRawFileParser, which runs cross-platform with no Wine, so a
+Thermo-only run stays on the fast, cool Rosetta VM and never starts the CPU-heavy QEMU VM. Other
+vendors (`.d`/`.wiff`/`.wiff2`) still convert with ProteoWizard `msconvert`, which needs Wine under
+QEMU. The UniDec analysis needs neither, so it runs under Rosetta too. Turn cool mode on with:
 
     ANALYZE_CONTEXT=colima-rosetta BASE_MASS=... MOD_MASS=... ./dar ~/Downloads/run
 
-Conversion still uses the QEMU VM (once per file); everything after runs under Rosetta, and
-re-analysing already-converted mzML never starts QEMU at all. Stop idle VMs with `colima stop x86`
-and `colima stop rosetta`.
+For a Thermo-only run this never touches QEMU. Re-analysing already-converted mzML also never starts
+QEMU. `CONVERTER=pwiz` forces the ProteoWizard path for `.raw` too. Stop idle VMs with
+`colima stop x86` and `colima stop rosetta`.
 
 ## Use
 
@@ -234,8 +236,10 @@ The multi-state average DAR and dispersity-index definitions (Eqs 1-3) follow:
 > chelator-to-antibody ratio of immunoconjugates.* Anal. Chim. Acta 2026, 1395, 345214.
 > doi:[10.1016/j.aca.2026.345214](https://doi.org/10.1016/j.aca.2026.345214) (open access, CC BY)
 
-Raw-to-mzML conversion uses [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`).
-This project is an independent wrapper and is not endorsed by or affiliated with the UniDec authors.
+Raw-to-mzML conversion uses [ThermoRawFileParser](https://github.com/compomics/ThermoRawFileParser)
+for Thermo `.raw` and [ProteoWizard](https://proteowizard.sourceforge.io/) (`msconvert`) for other
+vendors; see [CITATIONS.md](CITATIONS.md). This project is an independent wrapper and is not
+endorsed by or affiliated with the UniDec authors.
 
 ## License
 

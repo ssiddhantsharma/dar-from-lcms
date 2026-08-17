@@ -13,9 +13,14 @@ and note below exactly what was borrowed from other software (and what was chang
 > Phung, W. et al. UniDec Processing Pipeline for Rapid Analysis of Biotherapeutic Mass
 > Spectrometry Data. *Anal. Chem.* 2023, 95 (30), 11491-11498. doi:10.1021/acs.analchem.3c02010
 
-**ProteoWizard** (vendor raw to mzML conversion):
+**ProteoWizard** (vendor raw to mzML conversion, non-Thermo vendors):
 > Chambers, M.C. et al. A cross-platform toolkit for mass spectrometry and proteomics.
 > *Nat. Biotechnol.* 2012, 30, 918-920. doi:10.1038/nbt.2377
+
+**ThermoRawFileParser** (Thermo .raw to mzML, used instead of ProteoWizard for Thermo files so
+conversion needs no Wine/Windows):
+> Hulstaert, N. et al. ThermoRawFileParser: Modular, Scalable, and Cross-Platform RAW File
+> Conversion. *J. Proteome Res.* 2020, 19 (1), 537-542. doi:10.1021/acs.jproteome.9b00328
 
 ## Methods implemented here
 

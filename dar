@@ -2,9 +2,9 @@
 # ./dar <dir>   convert vendor raw to mzML, deconvolve each with UniDec, print/save DAR.
 #
 # Cool mode (Apple Silicon):  ANALYZE_CONTEXT=colima-rosetta ./dar <dir>
-#   runs the analysis under Rosetta (fast, cool) and uses the slow QEMU VM only for the
-#   one-time raw->mzML conversion (Wine won't run under Rosetta). Re-analysing already-
-#   converted mzML then never starts QEMU at all.
+#   runs the analysis under Rosetta (fast, cool). Thermo .raw convert there too, with no Wine
+#   (ThermoRawFileParser), so a Thermo-only run never starts the hot QEMU VM at all. QEMU is
+#   used only to convert other vendors (.d/.wiff/.wiff2) under Wine.
 set -euo pipefail
 
 dir="$(cd "${1:?usage: dar <dir with vendor raw and/or .mzML>}" && pwd)"
@@ -12,28 +12,53 @@ here="$(cd "$(dirname "$0")" && pwd)"
 ctx="${COLIMA_CONTEXT:-colima-x86}"          # conversion context (QEMU; Wine needs full emulation)
 actx="${ANALYZE_CONTEXT:-$ctx}"              # analysis context (set colima-rosetta for cool mode)
 pwiz="chambm/pwiz-skyline-i-agree-to-the-vendor-licenses"
+# Thermo .raw convert cross-platform with no Wine (Hulstaert et al., J. Proteome Res. 2020,
+# doi:10.1021/acs.jproteome.9b00328), so they can go through the cool Rosetta VM, not QEMU.
+trfp="quay.io/biocontainers/thermorawfileparser:1.4.5--h05cac1d_1"
 dk=(docker --context "$ctx")
 adk=(docker --context "$actx")
+aprofile=x86; [ "$actx" = "colima-rosetta" ] && aprofile=rosetta
 
 vm_running() { colima list 2>/dev/null | awk -v p="$1" '$1==p{print $2}' | grep -qi running; }
 start_qemu() { colima start x86 --arch x86_64 --vm-type qemu --cpu 4 --memory 8 --disk 60; }
 start_rosetta() { colima start rosetta --vm-type vz --vz-rosetta --cpu 4 --memory 8 --disk 60; }
+ensure_vm() { vm_running "$1" || { [ "$1" = rosetta ] && start_rosetta || start_qemu; }; }
 
-# which raws still need converting (any vendor ProteoWizard reads)
+# which raws still need converting, split by converter: a Thermo .raw (a single FILE) needs no
+# Wine (ThermoRawFileParser, native, runs on the cool VM); other vendors -- including a Waters
+# .raw, which is a DIRECTORY -- go through msconvert under Wine (the hot QEMU VM). CONVERTER=pwiz
+# forces the Wine path for Thermo .raw too.
 shopt -s nullglob
-todo=()
+thermo=(); wine=()
 for raw in "$dir"/*.d "$dir"/*.raw "$dir"/*.wiff "$dir"/*.wiff2; do
     b="$(basename "$raw")"
-    [ -f "$dir/${b%.*}.mzML" ] || todo+=("$raw")
+    [ -f "$dir/${b%.*}.mzML" ] && continue
+    if [[ "$raw" == *.raw && -f "$raw" && "${CONVERTER:-}" != "pwiz" ]]; then
+        thermo+=("$raw")            # single-file .raw = Thermo
+    else
+        wine+=("$raw")              # .d / .wiff / .wiff2 / Waters .raw directory
+    fi
 done
 
-# conversion: only start the hot QEMU VM if there is actually raw to convert
-if [ ${#todo[@]} -gt 0 ]; then
-    vm_running x86 || start_qemu
-    "${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
-    for raw in "${todo[@]}"; do
+# Thermo .raw -> mzML on the analysis (cool) VM, default peak picking to match msconvert below
+if [ ${#thermo[@]} -gt 0 ]; then
+    ensure_vm "$aprofile"
+    "${adk[@]}" image inspect "$trfp" >/dev/null 2>&1 || "${adk[@]}" pull --platform linux/amd64 "$trfp"
+    for raw in "${thermo[@]}"; do
         b="$(basename "$raw")"
-        echo ">> converting $b -> mzML"
+        echo ">> converting $b -> mzML (ThermoRawFileParser, no Wine)"
+        "${adk[@]}" run --rm --platform linux/amd64 -v "$dir":/data "$trfp" \
+            ThermoRawFileParser -i "/data/$b" -f 2 -o /data
+    done
+fi
+
+# other vendor raw -> mzML with msconvert under Wine (only start the hot QEMU VM if needed)
+if [ ${#wine[@]} -gt 0 ]; then
+    ensure_vm x86
+    "${dk[@]}" image inspect "$pwiz" >/dev/null 2>&1 || "${dk[@]}" pull "$pwiz"
+    for raw in "${wine[@]}"; do
+        b="$(basename "$raw")"
+        echo ">> converting $b -> mzML (msconvert)"
         "${dk[@]}" run --rm -e WINEDEBUG=-all -v "$dir":/data "$pwiz" \
             wine_anyuser msconvert "/data/$b" \
             --mzML --32 --zlib --filter "peakPicking vendor msLevel=1-" -o /data
@@ -41,11 +66,7 @@ if [ ${#todo[@]} -gt 0 ]; then
 fi
 
 # analysis: ensure the chosen VM is up (Rosetta in cool mode, else the QEMU VM)
-if [ "$actx" = "colima-rosetta" ]; then
-    vm_running rosetta || start_rosetta
-else
-    vm_running x86 || start_qemu
-fi
+ensure_vm "$aprofile"
 # prefer the prebuilt image (fast); pull it, else fall back to a local build
 img="${DAR_IMAGE:-ghcr.io/ssiddhantsharma/dar-from-lcms:latest}"
 if ! "${adk[@]}" image inspect "$img" >/dev/null 2>&1; then
@@ -68,3 +89,4 @@ args=(); for f in "${mz[@]}"; do args+=("/data/$(basename "$f")"); done
 
 # UniDec license: pass the citation request on to the end user
 echo ">> Deconvolution by UniDec (Marty et al., Anal. Chem. 2015, doi:10.1021/acs.analchem.5b00140) -- please cite."
+[ ${#thermo[@]} -gt 0 ] && echo ">> Thermo .raw conversion by ThermoRawFileParser (Hulstaert et al., J. Proteome Res. 2020, doi:10.1021/acs.jproteome.9b00328) -- please cite."

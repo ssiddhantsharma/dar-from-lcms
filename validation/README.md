@@ -30,19 +30,29 @@ which the authors call good agreement (so +-0.2 to 0.5 is the expected inter-met
 
 ## How to reproduce
 
+The 8 files are Thermo `.raw`, so conversion uses ThermoRawFileParser (no Wine/QEMU) and the whole
+run stays on the cool Rosetta VM:
+
 ```
-# download one or more .raw from the Zenodo record into ./raw, then:
+# download the record into ./raw (8 files, ~190 MB), then:
+ANALYZE_CONTEXT=colima-rosetta \
 MODE=native DAR_MAX_N=6 SATELLITES=0,162.05,324.11,486.16 \
   BASE_MASS=148057 MOD_MASS=769.7 \
-  ./dar ./raw            # mal-DFO example: MOD_MASS = chelator 713.83 + iron 55.85
+  ./dar ./raw
 ```
 
-Per-conjugate `MOD_MASS` = chelator mass + iron (+55.85): mal-DFO 769.7, N-suc-DFO 700.6,
-NCS-DFO 810.8, TMTHSI-DFO 940.9. `BASE_MASS` = trastuzumab base glycoform (confirm from sequence).
+`BASE_MASS` and `MOD_MASS` above are *starting estimates*, not verified numbers: `BASE_MASS` is
+the trastuzumab G0F/G0F glycoform (literature), and `MOD_MASS` per chelator is an estimate that
+also assumes the conjugate carries iron (+55.85 Da), which the paper's SI would confirm or refute.
+Rather than trust these blind, the run reads the actual load-state spacing straight off the
+deconvolved mass distribution (the gap between adjacent load peaks) and anchors to the observed
+unmodified glycoform, then reports the config actually used. Estimate table (chelator + Fe): mal-DFO
+769.7, N-suc-DFO 700.6, NCS-DFO 810.8, TMTHSI-DFO 940.9.
 
 ## Status
 
-**Pending the deconvolution run** (native-IgG deconvolution needs the QEMU/UniDec pipeline and a
-round or two of parameter tuning). This is an *approximation* of the paper's glycoform-specific
-method, so the goal is to report how closely `average_dar` tracks the published CAR, honestly, with
-the config used. Results (a table of ours vs paper, and the figures) will be committed here.
+**Pending the deconvolution run.** Native-IgG deconvolution needs the UniDec pipeline and a round
+or two of parameter tuning, and this is an *approximation* of the paper's glycoform-specific
+integration. The plan: deconvolve one file, read the observed base mass and load-state spacing to
+fix the anchors from the data (not the estimates above), then run all 8 and report a table of ours
+vs published CAR, honestly, with the figures and the exact config. Results will be committed here.
