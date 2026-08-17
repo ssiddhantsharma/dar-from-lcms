@@ -9,3 +9,4 @@ dar_auto_results.json
 __pycache__/
 *.pyc
 dar_*.pdf
+examples/*.pdf
