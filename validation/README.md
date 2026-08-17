@@ -55,10 +55,16 @@ Where it does not bit-match, and why (not hidden):
 - **Window sensitivity.** Higher-CAR species elute later, so window width shifts the CAR. The 200 mM
   outlier (+0.39) used a wider window (13.3-15.7); the narrow-window files run low (~-0.34). Windows
   were set per file from the paper's retention data (SI Table S4), not tuned to the answer.
-- **Method difference.** The paper integrates specific G0F/G0F and G0F/G1F peaks per load state;
-  this tool folds a broader glycoform set via `SATELLITES` and uses a simpler anchored integration,
-  which over-weights the low-CAR end (N-suc 600 mM per-CAR ours vs paper Table S6: CAR0 38/18,
-  CAR1 91/68, CAR2 100/100, CAR3 71/87).
+- **Method difference (tested, not tunable here).** The paper integrates specific G0F/G0F and
+  G0F/G1F peaks per load state; this tool folds a broader glycoform set via `SATELLITES` and uses a
+  simpler anchored integration, which over-weights the low-CAR end (N-suc 600 mM per-CAR ours vs
+  paper Table S6: CAR0 38/18, CAR1 91/68, CAR2 100/100, CAR3 71/87). Restricting `SATELLITES` to
+  their exact G0F/G0F+G0F/G1F selection, or changing the band width, does not close the gap
+  (averageCAR stays 2.14-2.26 across those choices, never 2.48): the residual is in the
+  deconvolution/integration step, so closing it would need their full UniDec configuration (not
+  published) or RT-resolved per-CAR EIC extraction (a different method, intentionally not built).
+  With a single validation dataset, tuning parameters to close it would be unfalsifiable
+  overfitting, so it is left as-is.
 - **Acquisition sensitivity.** The paper's own value moves 1.93 (80 eV) to 2.19 (140 eV) isCID, and
   batch to batch (N-suc-DFO-3 measured 1.41 by SEC-MS, 1.68 radiometric, 1.89 SEC-UV; SI Tables S3,
   S9). The +-0.4 spread here is comparable to that inter-method / inter-batch spread.
