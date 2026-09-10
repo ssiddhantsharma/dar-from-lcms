@@ -127,11 +127,28 @@ def elution_window(tic, void=2.0):
     return float(t[lo]), float(t[hi])
 
 
-def dar_from_massdat(md, base, step, widths=(15, 25, 40, 60)):
-    # DAR anchored at base / base+step; robustness table across integration half-widths
+def picked_masses(md, thresh_pct=5.0):
+    """Masses of real deconvolved peaks (local maxima >= thresh_pct of the max intensity).
+    Used to gate DAR bands so deconvolution noise in an otherwise-empty window is not
+    integrated as signal — see dar_from_massdat(peaks=...)."""
+    from scipy.signal import find_peaks
+    y = md[:, 1]
+    idx, _ = find_peaks(y, height=thresh_pct / 100.0 * float(y.max()))
+    return md[idx, 0]
+
+
+def dar_from_massdat(md, base, step, widths=(15, 25, 40, 60), peaks=None, gate_tol=8.0):
+    # DAR anchored at base / base+step; robustness table across integration half-widths.
+    # `peaks` (from picked_masses) optionally GATES each band: a band is counted only when
+    # a real deconvolved peak lies within gate_tol Da of its centre, so noise in an empty
+    # window is not integrated. Default peaks=None -> ungated (original behaviour).
+    def band(center, w):
+        if peaks is not None and not any(abs(p - center) <= gate_tol for p in peaks):
+            return 0.0
+        return area(md, center - w, center + w)
     table = []
     for w in widths:
-        a0, a1 = area(md, base - w, base + w), area(md, base + step - w, base + step + w)
+        a0, a1 = band(base, w), band(base + step, w)
         table.append({"halfwidth_Da": w, "naked_area": round(a0, 1),
                       "conj_area": round(a1, 1),
                       "DAR": round(a1 / (a0 + a1) if a0 + a1 else 0, 3)})
@@ -462,7 +479,8 @@ def render(name, out, md, mz, tic, uv, tmin, tmax, base, step, peak_width=None):
     (see replot) without re-running the deconvolution."""
     plt = _mpl()
     tag = name.replace(" ", "_")
-    dar, table = dar_from_massdat(md, base, step)
+    peaks = picked_masses(md) if os.environ.get("DAR_GATE") else None   # opt-in noise gate
+    dar, table = dar_from_massdat(md, base, step, peaks=peaks)
     # two-state area fractions of the (0-drug + 1-drug) population; the +1 fraction
     # IS the reported DAR, so labelling it on the peak makes the number self-evident.
     naked_pct, conj_pct = round((1 - dar) * 100, 1), round(dar * 100, 1)

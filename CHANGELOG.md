@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses date-based notes.
 
+## v1.2.0 - 2026-09-10
+
+### Added
+- **Opt-in peak-gated DAR** (`DAR_GATE=1`): a DAR band is integrated only when a real
+  deconvolved peak (`picked_masses`) lies within `gate_tol` (8 Da) of its centre, so
+  deconvolution noise in an otherwise-empty window is not counted as signal. Off by default
+  (behaviour unchanged); useful for wide or mixed-elution spectra where an empty window can
+  otherwise read a few percent of spurious "signal". `dar_from_massdat(..., peaks=...)`.
+
 ## v1.1.0 - 2026-08-17
 
 ### Added

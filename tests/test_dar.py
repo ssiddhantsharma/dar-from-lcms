@@ -86,6 +86,19 @@ def test_dar_is_zero_when_no_conjugate():
     assert dar < 0.02
 
 
+def test_peak_gating_rejects_empty_window_noise():
+    # pure-naked spectrum with low broad noise sitting under the conjugate window but no
+    # real conjugate peak: ungated integration counts the noise, the gate rejects it.
+    base, step = 10000.0, 500.0
+    m = np.arange(9000, 11000, 1.0)
+    inten = _gauss(m, base, 100.0) + 3.0 * np.exp(-((m - (base + step)) / 40.0) ** 2)
+    md = np.column_stack([m, inten])
+    dar_ungated, _ = da.dar_from_massdat(md, base, step)
+    peaks = da.picked_masses(md)                        # only the naked peak (noise < 5%)
+    dar_gated, _ = da.dar_from_massdat(md, base, step, peaks=peaks)
+    assert dar_gated < 0.01 < dar_ungated              # gate removes the noise-driven "signal"
+
+
 def test_charge_peaks_recovers_charges():
     mass = 10000.0
     mz = np.arange(600, 2100, 0.5)
